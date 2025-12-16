@@ -4,5 +4,11 @@
 <dict>
 	<key>LSEnvironment</key>
 	<dict/>
+	<key>AnthropicAPIKey</key>
+	<string>$(ANTHROPIC_API_KEY)</string>
+	<key>AnthropicModel</key>
+	<string>$(ANTHROPIC_MODEL)</string>
+	<key>AnthropicMaxTokens</key>
+	<string>$(ANTHROPIC_MAX_TOKENS)</string>
 </dict>
 </plist>

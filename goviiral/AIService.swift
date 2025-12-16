@@ -417,8 +417,13 @@ enum ClaudeConfig {
     private static let defaultMaxTokens = 900
 
     static var apiKey: String? {
-        if let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !envKey.isEmpty {
-            return envKey
+        if let key = sanitizedKey(ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]) {
+            return key
+        }
+
+        // Permitir inyección via Info.plist (por ejemplo con valores de build settings)
+        if let key = sanitizedKey(Bundle.main.infoDictionary?["AnthropicAPIKey"] as? String ?? Bundle.main.infoDictionary?["ANTHROPIC_API_KEY"] as? String) {
+            return key
         }
 
         return nil
@@ -426,6 +431,10 @@ enum ClaudeConfig {
 
     static var model: String {
         if let override = sanitizedModel(ProcessInfo.processInfo.environment["ANTHROPIC_MODEL"]) {
+            return override
+        }
+
+        if let override = sanitizedModel(Bundle.main.infoDictionary?["AnthropicModel"] as? String ?? Bundle.main.infoDictionary?["ANTHROPIC_MODEL"] as? String) {
             return override
         }
 
@@ -437,7 +446,18 @@ enum ClaudeConfig {
             return override
         }
 
+        if let override = sanitizedInt(Bundle.main.infoDictionary?["AnthropicMaxTokens"] as? String ?? Bundle.main.infoDictionary?["ANTHROPIC_MAX_TOKENS"] as? String) {
+            return override
+        }
+
         return defaultMaxTokens
+    }
+
+    private static func sanitizedKey(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("$("), !trimmed.lowercased().contains("your_"), !trimmed.lowercased().contains("tu_clave") else { return nil }
+        return trimmed
     }
 
     private static func sanitizedModel(_ raw: String?) -> String? {
