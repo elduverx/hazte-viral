@@ -9,9 +9,12 @@ import SwiftUI
 
 @main
 struct goviiralApp: App {
+    @StateObject private var subscriptionManager = SubscriptionManager()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(subscriptionManager)
         }
     }
 }
