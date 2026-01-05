@@ -13,7 +13,7 @@ struct goviiralApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainTabView()
                 .environmentObject(subscriptionManager)
         }
     }

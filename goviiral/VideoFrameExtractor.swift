@@ -1,8 +1,9 @@
 import AVFoundation
-import UIKit
+import SwiftUI
+import UniformTypeIdentifiers
 
 class VideoFrameExtractor {
-    static func extractFrames(from videoURL: URL, frameCount: Int = 3) async throws -> [UIImage] {
+    static func extractFrames(from videoURL: URL, frameCount: Int = 3) async throws -> [CGImage] {
         let asset = AVAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -16,7 +17,7 @@ class VideoFrameExtractor {
             throw VideoAnalysisError.invalidVideo
         }
         
-        var images: [UIImage] = []
+        var images: [CGImage] = []
         let timeStep = durationInSeconds / Double(frameCount + 1)
         
         for i in 1...frameCount {
@@ -24,8 +25,7 @@ class VideoFrameExtractor {
             
             do {
                 let cgImage = try await generator.image(at: time).image
-                let uiImage = UIImage(cgImage: cgImage)
-                images.append(uiImage)
+                images.append(cgImage)
             } catch {
                 print("Failed to extract frame at time \(timeStep * Double(i)): \(error)")
                 continue
@@ -39,11 +39,23 @@ class VideoFrameExtractor {
         return images
     }
     
-    static func imageToBase64(image: UIImage, quality: CGFloat = 0.8) -> String? {
-        guard let imageData = image.jpegData(compressionQuality: quality) else {
+    static func imageToBase64(image: CGImage, quality: CGFloat = 0.8) -> String? {
+        let data = CFDataCreateMutable(nil, 0)!
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
             return nil
         }
-        return imageData.base64EncodedString()
+        
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: quality
+        ]
+        
+        CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        
+        let nsData = CFDataCreateCopy(nil, data) as Data
+        return nsData.base64EncodedString()
     }
 }
 

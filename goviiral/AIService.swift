@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import UIKit
+import CoreGraphics
 
 protocol AIAnalysisProviding {
     func analyze(videoURL: URL, title: String?, videoHash: String?) async throws -> AnalysisReport
@@ -102,7 +102,7 @@ final class ClaudeAIService: AIAnalysisProviding {
         )
     }
 
-    private func makeRequest(apiKey: String, title: String, frames: [UIImage]) throws -> URLRequest {
+    private func makeRequest(apiKey: String, title: String, frames: [CGImage]) throws -> URLRequest {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
             throw AnalysisError.server(message: "URL de API inválida")
         }
@@ -490,7 +490,7 @@ enum ClaudeConfig {
 
 protocol ClaudeContentBlock: Encodable {}
 
-private struct ClaudeTextBlock: ClaudeContentBlock {
+struct ClaudeTextBlock: ClaudeContentBlock {
     let type = "text"
     let text: String
 }
@@ -512,7 +512,7 @@ private struct ClaudeImageSource: Encodable {
     }
 }
 
-private struct ClaudeRequest: Encodable {
+struct ClaudeRequest: Encodable {
     let model: String
     let maxTokens: Int
     let temperature: Double
@@ -528,7 +528,7 @@ private struct ClaudeRequest: Encodable {
     }
 }
 
-private struct ClaudeMessage: Encodable {
+struct ClaudeMessage: Encodable {
     let role: String
     let content: [ClaudeContentBlock]
     
@@ -555,11 +555,11 @@ private struct AnyEncodable: Encodable {
     }
 }
 
-private struct ClaudeResponse: Decodable {
+struct ClaudeResponse: Decodable {
     let content: [ClaudeContent]
 }
 
-private struct ClaudeContent: Decodable {
+struct ClaudeContent: Decodable {
     let type: String
     let text: String?
 }

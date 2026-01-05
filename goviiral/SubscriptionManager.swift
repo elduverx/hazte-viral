@@ -10,7 +10,7 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var product: Product?
     @Published private(set) var isSubscribed = false
     @Published private(set) var isProcessing = false
-    @Published private(set) var priceDisplay = "5 €/mes"
+    @Published private(set) var priceDisplay = "Cargando..."
     @Published var errorMessage: String?
 
     private let productIdentifiers = ["com.goviiral.subscription.monthly"]
@@ -23,57 +23,85 @@ final class SubscriptionManager: ObservableObject {
     func refreshProducts() async {
         isProcessing = true
         defer { isProcessing = false }
-
+        
         do {
             let products = try await Product.products(for: productIdentifiers)
             product = products.first
-            if let displayPrice = product?.displayPrice {
-                priceDisplay = "\(displayPrice)/mes"
+            if let product = product {
+                priceDisplay = "\(product.displayPrice)/mes"
+            } else {
+                priceDisplay = "No disponible"
+                errorMessage = "Producto no encontrado en App Store"
             }
             await updateSubscriptionStatus()
         } catch {
-            errorMessage = "No se pudo cargar la suscripción. \(error.localizedDescription)"
+            priceDisplay = "Error al cargar"
+            errorMessage = "No se pudo cargar la suscripción: \(error.localizedDescription)"
         }
     }
 
     func purchase() async {
         guard let product else {
+            errorMessage = "Producto no disponible. Intenta refrescar."
             await refreshProducts()
             return
         }
-
+        
+        errorMessage = nil
         isProcessing = true
         defer { isProcessing = false }
-
+        
         do {
             let result = try await product.purchase()
             switch result {
             case .success(let verification):
-                let transaction = try checkVerified(verification)
-                if productIdentifiers.contains(transaction.productID) {
-                    isSubscribed = transaction.revocationDate == nil
+                do {
+                    let transaction = try checkVerified(verification)
+                    if productIdentifiers.contains(transaction.productID) {
+                        isSubscribed = transaction.revocationDate == nil
+                        if isSubscribed {
+                            await transaction.finish()
+                        }
+                    }
+                } catch {
+                    errorMessage = "Error al verificar la compra: \(error.localizedDescription)"
                 }
-                await transaction.finish()
-            case .pending, .userCancelled:
+            case .pending:
+                errorMessage = "Compra pendiente. Revisa tu configuración de pagos."
+            case .userCancelled:
                 break
             @unknown default:
+                errorMessage = "Resultado de compra desconocido"
                 break
             }
         } catch {
-            errorMessage = "No se pudo completar la compra. \(error.localizedDescription)"
+            errorMessage = "No se pudo completar la compra: \(error.localizedDescription)"
         }
     }
 
+    func restorePurchases() async {
+        await updateSubscriptionStatus()
+    }
+    
     func updateSubscriptionStatus() async {
         var active = false
-        for await result in Transaction.currentEntitlements {
-            guard case .verified(let transaction) = result else { continue }
-            if productIdentifiers.contains(transaction.productID), transaction.revocationDate == nil {
-                active = true
-                break
+        
+        do {
+            for await result in Transaction.currentEntitlements {
+                do {
+                    let transaction = try checkVerified(result)
+                    if productIdentifiers.contains(transaction.productID), transaction.revocationDate == nil {
+                        active = true
+                        break
+                    }
+                } catch {
+                    continue
+                }
             }
+            isSubscribed = active
+        } catch {
+            errorMessage = "Error al verificar suscripción: \(error.localizedDescription)"
         }
-        isSubscribed = active
     }
 
     #if DEBUG

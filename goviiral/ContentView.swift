@@ -17,7 +17,7 @@ struct ContentView: View {
     @State private var showTutorial = !UserDefaults.standard.bool(forKey: "hasSeenTutorial")
     @State private var showPaywall = false
     @State private var hasPresentedPaywall = false
-    private let subscriptionGateEnabled = false
+    private let subscriptionGateEnabled = true
 
     private var textPrimary: Color { Theme.primary(scheme) }
     private var textSecondary: Color { Theme.secondary(scheme) }
@@ -96,10 +96,20 @@ struct ContentView: View {
             if isActive { showPaywall = false }
             if isActive { hasPresentedPaywall = true }
         }
-        .onAppear { presentPaywallIfNeeded() }
-        .onChange(of: showTutorial) { _ in presentPaywallIfNeeded() }
+        .onAppear { 
+            Task { 
+                await subscriptionManager.updateSubscriptionStatus()
+                presentPaywallIfNeeded() 
+            }
+        }
+        .onChange(of: showTutorial) { _ in 
+            Task { 
+                await subscriptionManager.updateSubscriptionStatus()
+                presentPaywallIfNeeded() 
+            }
+        }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     viewModel.showHistory = true
                 } label: {
@@ -114,12 +124,21 @@ struct ContentView: View {
                 viewModel.showHistory = false
             }
         }
+        #if os(iOS)
         .fullScreenCover(isPresented: $showTutorial) {
             OnboardingView {
                 UserDefaults.standard.set(true, forKey: "hasSeenTutorial")
                 showTutorial = false
             }
         }
+        #else
+        .sheet(isPresented: $showTutorial) {
+            OnboardingView {
+                UserDefaults.standard.set(true, forKey: "hasSeenTutorial")
+                showTutorial = false
+            }
+        }
+        #endif
     }
 
     private var header: some View {

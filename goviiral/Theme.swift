@@ -24,7 +24,11 @@ enum Theme {
     )
 
     static func background(_ scheme: ColorScheme) -> Color {
+        #if os(iOS)
         scheme == .dark ? .black : Color(.systemBackground)
+        #else
+        scheme == .dark ? .black : .white
+        #endif
     }
 
     static func panel(_ scheme: ColorScheme) -> Color {
