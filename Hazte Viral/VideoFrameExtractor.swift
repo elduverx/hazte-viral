@@ -24,7 +24,12 @@ class VideoFrameExtractor {
             let time = CMTime(seconds: timeStep * Double(i), preferredTimescale: 600)
             
             do {
-                let cgImage = try await generator.image(at: time).image
+                let cgImage: CGImage
+                if #available(iOS 16.0, macOS 13.0, *) {
+                    cgImage = try await generator.image(at: time).image
+                } else {
+                    cgImage = try generator.copyCGImage(at: time, actualTime: nil)
+                }
                 images.append(cgImage)
             } catch {
                 print("Failed to extract frame at time \(timeStep * Double(i)): \(error)")

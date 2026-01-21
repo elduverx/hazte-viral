@@ -14,10 +14,6 @@ import SwiftUI
 
 @MainActor
 final class AnalyzerViewModel: ObservableObject {
-    @Published var selectedItem: PhotosPickerItem? {
-        didSet { Task { await loadVideo(from: selectedItem) } }
-    }
-
     @Published var selectedVideoURL: URL?
     @Published var player: AVPlayer?
     @Published var report: AnalysisReport?
@@ -55,12 +51,14 @@ final class AnalyzerViewModel: ObservableObject {
         print("[Init] ViewModel inicializado con \(history.count) reportes en historial")
     }
 
-    func loadVideo(from item: PhotosPickerItem?) async {
-        guard let item = item else { return }
-        stopCurrentPlayback()
-        report = nil
-        isAnalyzing = false
-        isLoadingVideo = true
+    func handleLegacySelection(with url: URL) {
+        prepareForNewSelection()
+        finalizeSelection(with: url, displayName: url.lastPathComponent)
+    }
+
+    @available(iOS 16.0, macOS 13.0, *)
+    func loadVideo(from item: PhotosPickerItem) async {
+        prepareForNewSelection()
         do {
             let data = try await item.loadTransferable(type: Data.self)
             guard let data = data else { throw AnalysisError.invalidVideo }
@@ -70,22 +68,34 @@ final class AnalyzerViewModel: ObservableObject {
                 .appendingPathExtension("mov")
             try data.write(to: tempURL)
 
-            selectedVideoURL = tempURL
-            player = AVPlayer(url: tempURL)
-            displayName = item.itemIdentifier ?? "Video"
+            finalizeSelection(with: tempURL, displayName: item.itemIdentifier)
         } catch {
             present(error: error)
+            isLoadingVideo = false
         }
-        isLoadingVideo = false
     }
 
     func resetSelection() {
         stopCurrentPlayback()
-        selectedItem = nil
         selectedVideoURL = nil
         report = nil
         isAnalyzing = false
         displayName = "Your video"
+    }
+
+    private func prepareForNewSelection() {
+        stopCurrentPlayback()
+        report = nil
+        isAnalyzing = false
+        isLoadingVideo = true
+    }
+
+    private func finalizeSelection(with url: URL, displayName name: String?) {
+        selectedVideoURL = url
+        player = AVPlayer(url: url)
+        let trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        displayName = trimmedName?.isEmpty == false ? trimmedName! : "Video"
+        isLoadingVideo = false
     }
 
     private func stopCurrentPlayback() {

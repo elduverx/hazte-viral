@@ -1,4 +1,3 @@
-import PassKit
 import StoreKit
 import SwiftUI
 
@@ -16,7 +15,7 @@ struct SubscriptionPaywallView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     header
@@ -112,14 +111,14 @@ struct SubscriptionPaywallView: View {
             .disabled(subscriptionManager.isProcessing)
 
             if subscriptionManager.isProcessing {
-                ProgressView("Procesando con Apple Pay...")
+                ProgressView("Procesando compra...")
                     .font(.footnote)
             }
         }
     }
 
     private var purchaseFootnote: some View {
-        Text("Suscripción de 5€ al mes sin prueba gratuita. Cobro inmediato por Apple Pay/App Store, cancela cuando quieras desde Ajustes.")
+        Text("Suscripción de 5€ al mes sin prueba gratuita. El cobro se realiza a través de tu cuenta de App Store. Cancela cuando quieras desde Ajustes.")
             .font(.footnote)
             .foregroundStyle(textSecondary)
     }
@@ -167,7 +166,7 @@ struct SubscriptionPaywallView: View {
 
     private var benefits: [String] {
         [
-            "Análisis ilimitados con IA",
+            "Análisis ilimitados con IA (vs 3 mensuales gratis)",
             "Prioridad en procesamiento",
             "Predicciones detalladas y consejos pro",
             "Historial completo y sincronizado"

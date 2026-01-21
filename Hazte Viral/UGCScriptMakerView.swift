@@ -19,7 +19,7 @@ struct UGCScriptMakerView: View {
     private var stroke: Color { Theme.subtleStroke(scheme) }
     
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             ZStack {
                 Theme.background(scheme).ignoresSafeArea()
                 BackgroundGlow()
@@ -438,7 +438,7 @@ struct UGCScriptMakerView: View {
             HStack {
                 if viewModel.isGenerating {
                     ProgressView()
-                        .tint(.white)
+                        .compatibleTint(.white)
                         .scaleEffect(0.9)
                 } else {
                     Image(systemName: "wand.and.stars")

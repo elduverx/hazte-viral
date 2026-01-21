@@ -20,7 +20,7 @@ struct UGCScriptDetailView: View {
     private var stroke: Color { Theme.subtleStroke(scheme) }
     
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 20) {
@@ -328,10 +328,16 @@ struct ShotCard: View {
                 }
                 
                 if !shot.notes.isEmpty {
-                    Text("💡 \(shot.notes)")
-                        .font(.caption)
-                        .foregroundStyle(Theme.secondary(scheme))
-                        .italic()
+                    if #available(iOS 16.0, macOS 13.0, *) {
+                        Text("💡 \(shot.notes)")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary(scheme))
+                            .italic()
+                    } else {
+                        Text("💡 \(shot.notes)")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary(scheme))
+                    }
                 }
             }
         }
@@ -420,7 +426,7 @@ struct ExportOptionsView: View {
     @State private var selectedFormats: Set<ExportFormat> = [.text]
     
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             VStack(spacing: 20) {
                 Text("Exportar guión")
                     .font(.title2.bold())

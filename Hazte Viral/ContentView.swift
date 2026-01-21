@@ -17,6 +17,9 @@ struct ContentView: View {
     @State private var showTutorial = !UserDefaults.standard.bool(forKey: "hasSeenTutorial")
     @State private var showPaywall = false
     @State private var hasPresentedPaywall = false
+#if os(iOS)
+    @State private var showLegacyVideoPicker = false
+#endif
     private let subscriptionGateEnabled = true
 
     private var textPrimary: Color { Theme.primary(scheme) }
@@ -25,7 +28,7 @@ struct ContentView: View {
     private var stroke: Color { Theme.subtleStroke(scheme) }
 
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             ZStack {
                 Theme.background(scheme).ignoresSafeArea()
                 BackgroundGlow()
@@ -45,11 +48,11 @@ struct ContentView: View {
                                 inlineResults(report)
                             }
                         } else {
-                            PhotosPicker(selection: $viewModel.selectedItem, matching: .videos) {
+                            videoPickerControl {
                                 HStack {
                                     if viewModel.isLoadingVideo {
                                         ProgressView()
-                                            .tint(.white)
+                                            .compatibleTint(.white)
                                             .scaleEffect(0.9)
                                     } else {
                                         Image(systemName: "plus")
@@ -124,6 +127,15 @@ struct ContentView: View {
                 viewModel.showHistory = false
             }
         }
+#if os(iOS)
+        .sheet(isPresented: $showLegacyVideoPicker) {
+            LegacyVideoPicker { url in
+                showLegacyVideoPicker = false
+                guard let url else { return }
+                viewModel.handleLegacySelection(with: url)
+            }
+        }
+#endif
         #if os(iOS)
         .fullScreenCover(isPresented: $showTutorial) {
             OnboardingView {
@@ -206,11 +218,11 @@ struct ContentView: View {
                         Text("Subir video")
                             .font(.headline)
                             .foregroundStyle(textPrimary)
-                        PhotosPicker(selection: $viewModel.selectedItem, matching: .videos) {
+                        videoPickerControl {
                             HStack {
                                 if viewModel.isLoadingVideo {
                                     ProgressView()
-                                        .tint(.white)
+                                        .compatibleTint(.white)
                                         .scaleEffect(0.9)
                                 } else {
                                     Image(systemName: "plus")
@@ -244,7 +256,7 @@ struct ContentView: View {
                                 .font(.headline)
                                 .foregroundStyle(textPrimary)
                             Spacer()
-                            PhotosPicker(selection: $viewModel.selectedItem, matching: .videos) {
+                            videoPickerControl {
                                 Text("Cambiar")
                                     .font(.caption)
                                     .foregroundStyle(Theme.accent)
@@ -289,6 +301,25 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func videoPickerControl<Label: View>(@ViewBuilder label: @escaping () -> Label) -> some View {
+#if os(iOS)
+        if #available(iOS 16.0, *) {
+            PhotosPickerButton(viewModel: viewModel, label: label)
+        } else {
+            Button(action: presentLegacyPicker) {
+                label()
+            }
+        }
+#else
+        if #available(macOS 13.0, *) {
+            PhotosPickerButton(viewModel: viewModel, label: label)
+        } else {
+            label()
+        }
+#endif
+    }
+
     private var analyzeButton: some View {
         Button {
             if let report = viewModel.report {
@@ -311,7 +342,7 @@ struct ContentView: View {
             HStack {
                 if viewModel.isAnalyzing {
                     ProgressView()
-                        .tint(.white)
+                        .compatibleTint(.white)
                         .scaleEffect(0.9)
                 } else {
                     Image(systemName: viewModel.selectedVideoURL == nil ? "plus" : (viewModel.report == nil ? "sparkles" : "eye"))
@@ -459,6 +490,12 @@ struct ContentView: View {
         }
     }
 
+    private func presentLegacyPicker() {
+#if os(iOS)
+        showLegacyVideoPicker = true
+#endif
+    }
+
     private func getScoreColor(_ score: Int) -> Color {
         if score >= 80 { return .green }
         else if score >= 60 { return .blue }
@@ -479,7 +516,7 @@ struct ReportSheet: View {
     private var textSecondary: Color { Theme.secondary(scheme) }
 
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 16) {
@@ -1353,7 +1390,7 @@ struct LoadingOverlay: View {
                         .frame(width: 80, height: 80)
                     
                     ProgressView()
-                        .tint(Theme.accent)
+                        .compatibleTint(Theme.accentStart)
                         .scaleEffect(1.5)
                 }
                 
@@ -1364,7 +1401,7 @@ struct LoadingOverlay: View {
                         .multilineTextAlignment(.center)
                         .animation(.easeInOut(duration: 0.5), value: currentMessage)
                         .labelStyle(.titleAndIcon)
-                        .tint(Theme.accentStart)
+                        .compatibleTint(Theme.accentStart)
                     
                     Text("Esto puede tomar unos segundos")
                         .font(.caption)
@@ -1525,7 +1562,7 @@ struct HistoryView: View {
     var onSelect: (AnalysisReport) -> Void
 
     var body: some View {
-        NavigationStack {
+        CompatibleNavigationStack {
             List {
                 ForEach(reports) { report in
                     Button {
@@ -1557,3 +1594,23 @@ struct HistoryView: View {
 #Preview {
     ContentView()
 }
+
+#if canImport(PhotosUI)
+@available(iOS 16.0, macOS 13.0, *)
+private struct PhotosPickerButton<Label: View>: View {
+    @ObservedObject var viewModel: AnalyzerViewModel
+    let label: () -> Label
+    @State private var selection: PhotosPickerItem?
+
+    var body: some View {
+        PhotosPicker(selection: $selection, matching: .videos) {
+            label()
+        }
+        .task(id: selection) {
+            guard let selection else { return }
+            await viewModel.loadVideo(from: selection)
+            await MainActor.run { self.selection = nil }
+        }
+    }
+}
+#endif

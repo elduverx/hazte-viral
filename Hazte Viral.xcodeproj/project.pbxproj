@@ -11,17 +11,17 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		8573815A2EE713BC008BED31 /* goviiral.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = goviiral.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8573815A2EE713BC008BED31 /* Hazte Viral.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Hazte Viral.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		85C70A1D2EF06D2700B0D01F /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		85DE60602EEFFE5000A2566A /* Exceptions for "goviiral" folder in "goviiral" target */ = {
+		85DE60602EEFFE5000A2566A /* Exceptions for "goviiral" folder in "Hazte Viral" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 857381592EE713BC008BED31 /* goviiral */;
+			target = 857381592EE713BC008BED31 /* Hazte Viral */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -29,7 +29,7 @@
 		8573815C2EE713BC008BED31 /* goviiral */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				85DE60602EEFFE5000A2566A /* Exceptions for "goviiral" folder in "goviiral" target */,
+				85DE60602EEFFE5000A2566A /* Exceptions for "goviiral" folder in "Hazte Viral" target */,
 			);
 			path = goviiral;
 			sourceTree = "<group>";
@@ -60,7 +60,7 @@
 		8573815B2EE713BC008BED31 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8573815A2EE713BC008BED31 /* goviiral.app */,
+				8573815A2EE713BC008BED31 /* Hazte Viral.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -76,9 +76,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		857381592EE713BC008BED31 /* goviiral */ = {
+		857381592EE713BC008BED31 /* Hazte Viral */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 857381652EE713BD008BED31 /* Build configuration list for PBXNativeTarget "goviiral" */;
+			buildConfigurationList = 857381652EE713BD008BED31 /* Build configuration list for PBXNativeTarget "Hazte Viral" */;
 			buildPhases = (
 				857381562EE713BC008BED31 /* Sources */,
 				857381572EE713BC008BED31 /* Frameworks */,
@@ -91,11 +91,11 @@
 			fileSystemSynchronizedGroups = (
 				8573815C2EE713BC008BED31 /* goviiral */,
 			);
-			name = goviiral;
+			name = "Hazte Viral";
 			packageProductDependencies = (
 			);
 			productName = goviiral;
-			productReference = 8573815A2EE713BC008BED31 /* goviiral.app */;
+			productReference = 8573815A2EE713BC008BED31 /* Hazte Viral.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -127,7 +127,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				857381592EE713BC008BED31 /* goviiral */,
+				857381592EE713BC008BED31 /* Hazte Viral */,
 			);
 		};
 /* End PBXProject section */
@@ -297,7 +297,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
@@ -345,7 +345,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
@@ -377,7 +377,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		857381652EE713BD008BED31 /* Build configuration list for PBXNativeTarget "goviiral" */ = {
+		857381652EE713BD008BED31 /* Build configuration list for PBXNativeTarget "Hazte Viral" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				857381662EE713BD008BED31 /* Debug */,
