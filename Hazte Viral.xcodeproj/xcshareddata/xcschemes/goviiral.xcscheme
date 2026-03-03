@@ -27,7 +27,7 @@
                BlueprintIdentifier = "857381592EE713BC008BED31"
                BuildableName = "Hazte Viral.app"
                BlueprintName = "Hazte Viral"
-               ReferencedContainer = "container:goviiral.xcodeproj">
+               ReferencedContainer = "container:Hazte Viral.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -56,14 +56,14 @@
             BlueprintIdentifier = "857381592EE713BC008BED31"
             BuildableName = "Hazte Viral.app"
             BlueprintName = "Hazte Viral"
-            ReferencedContainer = "container:goviiral.xcodeproj">
+            ReferencedContainer = "container:Hazte Viral.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "ANTHROPIC_API_KEY"
             value = ""
-            isEnabled = "YES">
+            isEnabled = "NO">
          </EnvironmentVariable>
       </EnvironmentVariables>
    </LaunchAction>
@@ -80,7 +80,7 @@
             BlueprintIdentifier = "857381592EE713BC008BED31"
             BuildableName = "Hazte Viral.app"
             BlueprintName = "Hazte Viral"
-            ReferencedContainer = "container:goviiral.xcodeproj">
+            ReferencedContainer = "container:Hazte Viral.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

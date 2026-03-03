@@ -9,7 +9,7 @@ import SwiftUI
 
 @main
 struct goviiralApp: App {
-    @StateObject private var subscriptionManager = SubscriptionManager()
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
 
     var body: some Scene {
         WindowGroup {

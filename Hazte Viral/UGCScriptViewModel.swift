@@ -19,6 +19,7 @@ final class UGCScriptViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showScriptDetail = false
     @Published var selectedScript: UGCScript?
+    @Published var paywallTrigger = 0
     
     // Form inputs
     @Published var selectedNiche: BusinessNiche = BusinessNiche.allCases[0]
@@ -35,9 +36,9 @@ final class UGCScriptViewModel: ObservableObject {
     private let scriptService: UGCScriptGenerating
     let creditsManager: CreditsManager
     
-    init(scriptService: UGCScriptGenerating = ClaudeUGCScriptService(), creditsManager: CreditsManager = CreditsManager.shared) {
-        self.scriptService = scriptService
-        self.creditsManager = creditsManager
+    init(scriptService: UGCScriptGenerating? = nil, creditsManager: CreditsManager? = nil) {
+        self.scriptService = scriptService ?? ClaudeUGCScriptService()
+        self.creditsManager = creditsManager ?? CreditsManager.shared
     }
     
     // MARK: - Actions
@@ -45,13 +46,8 @@ final class UGCScriptViewModel: ObservableObject {
         guard validateInputs() else { return }
         
         // Check credits/subscription
-        guard await creditsManager.canGenerateScripts(count: scriptCount) else {
-            if creditsManager.availableCredits < scriptCount {
-                errorMessage = "No tienes suficientes créditos. Necesitas \(scriptCount) créditos."
-            } else {
-                errorMessage = "Suscríbete para generar más de 3 guiones al mes."
-            }
-            showError = true
+        guard creditsManager.canGenerateScripts(count: scriptCount) else {
+            paywallTrigger += 1
             return
         }
         
@@ -72,7 +68,7 @@ final class UGCScriptViewModel: ObservableObject {
             
             let scripts = try await scriptService.generateMultipleScripts(request: request, count: scriptCount)
             
-            await creditsManager.consumeCredits(scriptCount)
+            creditsManager.consumeCredits(scriptCount)
             generatedScripts = scripts
             
         } catch {
@@ -156,22 +152,17 @@ final class CreditsManager: ObservableObject {
         checkMonthlyReset()
     }
     
-    func canGenerateScripts(count: Int) async -> Bool {
-        // If subscribed, always allow
-        if await SubscriptionManager.shared.isSubscribed {
+    func canGenerateScripts(count: Int) -> Bool {
+        if SubscriptionManager.shared.isSubscribed {
             return true
         }
-        
-        // Check monthly free limit
         return monthlyUsage + count <= freeMonthlyLimit
     }
     
-    func consumeCredits(_ count: Int) async {
-        if await SubscriptionManager.shared.isSubscribed {
-            // Subscribers don't consume credits
+    func consumeCredits(_ count: Int) {
+        if SubscriptionManager.shared.isSubscribed {
             return
         }
-        
         monthlyUsage += count
         saveCreditsData()
     }

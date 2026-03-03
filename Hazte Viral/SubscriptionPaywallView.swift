@@ -71,7 +71,8 @@ struct SubscriptionPaywallView: View {
             purchaseHeaderSection
             purchaseButtonSection
             purchaseFootnote
-            restoreButtons
+            legalLinksSection
+            restorePurchasesButton
         }
     }
 
@@ -118,28 +119,34 @@ struct SubscriptionPaywallView: View {
     }
 
     private var purchaseFootnote: some View {
-        Text("Suscripción de 5€ al mes sin prueba gratuita. El cobro se realiza a través de tu cuenta de App Store. Cancela cuando quieras desde Ajustes.")
+        Text("Suscripción de \(subscriptionManager.priceDisplay) sin prueba gratuita. El cobro se realiza a través de tu cuenta de App Store. Cancela cuando quieras desde Ajustes.")
             .font(.footnote)
             .foregroundStyle(textSecondary)
     }
 
-    private var restoreButtons: some View {
-        HStack(spacing: 12) {
-            Button("Restaurar Compras", action: restorePurchases)
-                .font(.subheadline.bold())
-                .disabled(subscriptionManager.isProcessing)
+    private var legalLinksSection: some View {
+        HStack(spacing: 16) {
+            Link("Términos de Uso", destination: URL(string: "https://hazteviral.app/terms")!)
+                .font(.caption)
+                .foregroundStyle(Theme.accent)
 
-            Button("Ya estoy suscrito") {
-                #if DEBUG
-                subscriptionManager.forceUnlockForDebug()
-                #else
-                restorePurchases()
-                #endif
-            }
-            .font(.subheadline)
-            .disabled(subscriptionManager.isProcessing)
+            Text("•")
+                .font(.caption)
+                .foregroundStyle(textSecondary)
+
+            Link("Política de Privacidad", destination: URL(string: "https://hazteviral.app/privacy")!)
+                .font(.caption)
+                .foregroundStyle(Theme.accent)
         }
-        .foregroundStyle(subscriptionManager.isProcessing ? Theme.accentStart.opacity(0.6) : Theme.accentStart)
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var restorePurchasesButton: some View {
+        Button("Restaurar Compras", action: restorePurchases)
+            .font(.caption)
+            .foregroundStyle(subscriptionManager.isProcessing ? Theme.accentStart.opacity(0.6) : Theme.accentStart)
+            .disabled(subscriptionManager.isProcessing)
+            .frame(maxWidth: .infinity, alignment: .center)
     }
 
     @ViewBuilder
@@ -154,7 +161,7 @@ struct SubscriptionPaywallView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Suscríbete por 5€ al mes")
+            Text("Suscríbete por \(subscriptionManager.priceDisplay)")
                 .font(.title2.bold())
                 .foregroundStyle(textPrimary)
             Text("Desbloquea análisis ilimitados, IA prioritaria y métricas avanzadas.")

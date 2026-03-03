@@ -17,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<string>2</string>
 	<key>LSEnvironment</key>
 	<dict/>
 	<key>AnthropicAPIKey</key>
@@ -26,6 +26,12 @@
 	<string>$(ANTHROPIC_MODEL)</string>
 	<key>AnthropicMaxTokens</key>
 	<string>$(ANTHROPIC_MAX_TOKENS)</string>
+	<key>SubscriptionProductIdentifiers</key>
+	<array>
+		<string>goviralpro1</string>
+	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Necesitamos acceso a tu galería para que puedas seleccionar los videos que deseas analizar con nuestra IA.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UISupportedInterfaceOrientations</key>

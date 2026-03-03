@@ -3,6 +3,10 @@ import StoreKit
 import SwiftUI
 import Combine
 
+enum AppMonetization {
+    static let paymentsEnabled = false
+}
+
 @MainActor
 final class SubscriptionManager: ObservableObject {
     static let shared = SubscriptionManager()
@@ -13,25 +17,50 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var priceDisplay = "Cargando..."
     @Published var errorMessage: String?
 
-    private let productIdentifiers = ["com.goviiral.subscription.monthly"]
+    private let productIdentifiers: [String]
 
-    init() {
+    init(productIdentifiers: [String]? = nil) {
+        self.productIdentifiers = productIdentifiers ?? SubscriptionManager.loadProductIdentifiers()
+        guard AppMonetization.paymentsEnabled else {
+            isSubscribed = true
+            priceDisplay = "Gratis"
+            return
+        }
         Task { await refreshProducts() }
         Task { await listenForTransactions() }
     }
 
+    private static func loadProductIdentifiers() -> [String] {
+        if let ids = Bundle.main.object(forInfoDictionaryKey: "SubscriptionProductIdentifiers") as? [String],
+           !ids.isEmpty {
+            return ids
+        }
+        return ["goviralpro1"]
+    }
+
     func refreshProducts() async {
+        guard AppMonetization.paymentsEnabled else {
+            isSubscribed = true
+            priceDisplay = "Gratis"
+            errorMessage = nil
+            return
+        }
+
         isProcessing = true
         defer { isProcessing = false }
         
         do {
+            print("[StoreKit] Buscando productos para IDs: \(productIdentifiers)")
             let products = try await Product.products(for: productIdentifiers)
+            print("[StoreKit] Productos encontrados: \(products.count)")
             product = products.first
             if let product = product {
+                print("[StoreKit] Producto cargado: \(product.displayName) - \(product.displayPrice)")
                 priceDisplay = "\(product.displayPrice)/mes"
             } else {
+                print("[StoreKit] ERROR: Ningún producto coincide con los IDs proporcionados.")
                 priceDisplay = "No disponible"
-                errorMessage = "Producto no encontrado en App Store"
+                errorMessage = "Producto no encontrado en App Store (IDs: \(productIdentifiers.joined(separator: ", ")))"
             }
             await updateSubscriptionStatus()
         } catch {
@@ -41,6 +70,12 @@ final class SubscriptionManager: ObservableObject {
     }
 
     func purchase() async {
+        guard AppMonetization.paymentsEnabled else {
+            isSubscribed = true
+            errorMessage = nil
+            return
+        }
+
         guard let product else {
             errorMessage = "Producto no disponible. Intenta refrescar."
             await refreshProducts()
@@ -80,28 +115,36 @@ final class SubscriptionManager: ObservableObject {
     }
 
     func restorePurchases() async {
+        guard AppMonetization.paymentsEnabled else {
+            isSubscribed = true
+            errorMessage = nil
+            return
+        }
+
         await updateSubscriptionStatus()
     }
     
     func updateSubscriptionStatus() async {
+        guard AppMonetization.paymentsEnabled else {
+            isSubscribed = true
+            errorMessage = nil
+            return
+        }
+
         var active = false
         
-        do {
-            for await result in Transaction.currentEntitlements {
-                do {
-                    let transaction = try checkVerified(result)
-                    if productIdentifiers.contains(transaction.productID), transaction.revocationDate == nil {
-                        active = true
-                        break
-                    }
-                } catch {
-                    continue
+        for await result in Transaction.currentEntitlements {
+            do {
+                let transaction = try checkVerified(result)
+                if productIdentifiers.contains(transaction.productID), transaction.revocationDate == nil {
+                    active = true
+                    break
                 }
+            } catch {
+                continue
             }
-            isSubscribed = active
-        } catch {
-            errorMessage = "Error al verificar suscripción: \(error.localizedDescription)"
         }
+        isSubscribed = active
     }
 
     #if DEBUG
@@ -111,6 +154,8 @@ final class SubscriptionManager: ObservableObject {
     #endif
 
     private func listenForTransactions() async {
+        guard AppMonetization.paymentsEnabled else { return }
+
         for await result in Transaction.updates {
             guard let transaction = try? checkVerified(result) else { continue }
             if productIdentifiers.contains(transaction.productID) {

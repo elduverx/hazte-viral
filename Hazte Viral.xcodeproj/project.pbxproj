@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		85C70A1E2EF06D2700B0D01F /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 85C70A1D2EF06D2700B0D01F /* StoreKit.framework */; };
+		85D1C6D92F12C926005BC718 /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 85C70A1D2EF06D2700B0D01F /* StoreKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -16,22 +16,24 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		85DE60602EEFFE5000A2566A /* Exceptions for "goviiral" folder in "Hazte Viral" target */ = {
+		85DE60602EEFFE5000A2566A /* Exceptions for "Hazte Viral" folder in "Hazte Viral" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				"package-lock.json",
+				package.json,
 			);
 			target = 857381592EE713BC008BED31 /* Hazte Viral */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		8573815C2EE713BC008BED31 /* goviiral */ = {
+		8573815C2EE713BC008BED31 /* Hazte Viral */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				85DE60602EEFFE5000A2566A /* Exceptions for "goviiral" folder in "Hazte Viral" target */,
+				85DE60602EEFFE5000A2566A /* Exceptions for "Hazte Viral" folder in "Hazte Viral" target */,
 			);
-			path = goviiral;
+			path = "Hazte Viral";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -41,7 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				85C70A1E2EF06D2700B0D01F /* StoreKit.framework in Frameworks */,
+				85D1C6D92F12C926005BC718 /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -51,7 +53,7 @@
 		857381512EE713BC008BED31 = {
 			isa = PBXGroup;
 			children = (
-				8573815C2EE713BC008BED31 /* goviiral */,
+				8573815C2EE713BC008BED31 /* Hazte Viral */,
 				85C70A1C2EF06D2700B0D01F /* Frameworks */,
 				8573815B2EE713BC008BED31 /* Products */,
 			);
@@ -89,7 +91,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				8573815C2EE713BC008BED31 /* goviiral */,
+				8573815C2EE713BC008BED31 /* Hazte Viral */,
 			);
 			name = "Hazte Viral";
 			packageProductDependencies = (
@@ -113,7 +115,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 857381552EE713BC008BED31 /* Build configuration list for PBXProject "goviiral" */;
+			buildConfigurationList = 857381552EE713BC008BED31 /* Build configuration list for PBXProject "Hazte Viral" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -276,17 +278,18 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
-				CODE_SIGN_ENTITLEMENTS = goviiral/goviiral.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "Hazte Viral/goviiral.entitlements";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 7KU5GZRD65;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = goviiral/Info.plist;
+				INFOPLIST_FILE = "Hazte Viral/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -301,8 +304,10 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.0.5;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.duverx.goviiral;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.elduverx.hazteviral;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = com.elduverx.hazteviral;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -324,17 +329,18 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
-				CODE_SIGN_ENTITLEMENTS = goviiral/goviiral.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "Hazte Viral/goviiral.entitlements";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = 7KU5GZRD65;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = goviiral/Info.plist;
+				INFOPLIST_FILE = "Hazte Viral/Info.plist";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -349,8 +355,10 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.0.5;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.duverx.goviiral;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]" = com.elduverx.hazteviral;
+				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = com.elduverx.hazteviral;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
@@ -368,7 +376,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		857381552EE713BC008BED31 /* Build configuration list for PBXProject "goviiral" */ = {
+		857381552EE713BC008BED31 /* Build configuration list for PBXProject "Hazte Viral" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				857381632EE713BD008BED31 /* Debug */,

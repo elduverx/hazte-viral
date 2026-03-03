@@ -7,11 +7,13 @@
 
 import SwiftUI
 
+@MainActor
 struct UGCScriptMakerView: View {
     @StateObject private var viewModel = UGCScriptViewModel()
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
+    @State private var showPaywall = false
     
     private var textPrimary: Color { Theme.primary(scheme) }
     private var textSecondary: Color { Theme.secondary(scheme) }
@@ -27,7 +29,7 @@ struct UGCScriptMakerView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         header
-                        
+
                         if !subscriptionManager.isSubscribed {
                             subscriptionBanner
                         }
@@ -44,6 +46,9 @@ struct UGCScriptMakerView: View {
                     .padding()
                 }
             }
+        }
+        .sheet(isPresented: $showPaywall) {
+            SubscriptionPaywallView()
         }
         .alert("Error", isPresented: $viewModel.showError) {
             Button("Entendido", role: .cancel) {}
@@ -62,6 +67,9 @@ struct UGCScriptMakerView: View {
                 }
                 .foregroundStyle(textPrimary)
             }
+        }
+        .onChange(of: viewModel.paywallTrigger) { _ in
+            showPaywall = true
         }
     }
     
@@ -117,7 +125,7 @@ struct UGCScriptMakerView: View {
                 Spacer()
                 
                 Button("Suscribirse") {
-                    // Show subscription paywall
+                    showPaywall = true
                 }
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 16)
@@ -128,6 +136,7 @@ struct UGCScriptMakerView: View {
             }
         }
     }
+
     
     private var businessInfoSection: some View {
         VStack(spacing: 0) {

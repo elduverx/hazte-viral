@@ -9,8 +9,10 @@ import AVKit
 import PhotosUI
 import SwiftUI
 
+@MainActor
 struct ContentView: View {
     @StateObject private var viewModel = AnalyzerViewModel()
+    @StateObject private var creditsManager = AnalysisCreditsManager.shared
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @Environment(\.colorScheme) private var scheme
     @State private var activeReport: AnalysisReport?
@@ -20,7 +22,7 @@ struct ContentView: View {
 #if os(iOS)
     @State private var showLegacyVideoPicker = false
 #endif
-    private let subscriptionGateEnabled = true
+    private let subscriptionGateEnabled = AppMonetization.paymentsEnabled
 
     private var textPrimary: Color { Theme.primary(scheme) }
     private var textSecondary: Color { Theme.secondary(scheme) }
@@ -183,7 +185,7 @@ struct ContentView: View {
                     Text("Suscripción Go Viral Pro")
                         .font(.headline)
                         .foregroundStyle(textPrimary)
-                    Text("5€ al mes vía Apple Pay, cancela cuando quieras.")
+                    Text("Análisis ilimitados por 5€/mes. Usuarios gratuitos: 3 análisis mensuales.")
                         .font(.caption)
                         .foregroundStyle(textSecondary)
                 }
@@ -327,7 +329,8 @@ struct ContentView: View {
                 return
             }
 
-            if subscriptionGateEnabled && !subscriptionManager.isSubscribed {
+            // Verificar créditos para usuarios no suscritos
+            if !subscriptionManager.isSubscribed && !creditsManager.canAnalyze() {
                 showPaywall = true
                 return
             }
@@ -403,6 +406,11 @@ struct ContentView: View {
                 }
 
                 MetricInsightsView(metrics: report.metrics)
+
+                BenchmarkContextView()
+                if let caseStudy = TrainingDataset.examples.first {
+                    ExampleCaseStudyView(example: caseStudy)
+                }
               
 
                 if let details = report.analysisDetails {
@@ -467,6 +475,64 @@ struct ContentView: View {
         }
     }
 
+    private struct BenchmarkContextView: View {
+        @Environment(\.colorScheme) private var scheme
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Comparativa real", systemImage: "chart.bar.doc.horizontal")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(Theme.primary(scheme))
+                Text("Estas métricas se contrastan con \(TrainingDataset.examples.count.formatted()) reels auditados en nichos fitness, cocina, belleza y más. Actualizamos el benchmark cada semana con nuevos casos reales.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondary(scheme))
+            }
+            .padding(12)
+            .background(Theme.panel(scheme).opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.subtleStroke(scheme).opacity(0.8)))
+        }
+    }
+
+    private struct ExampleCaseStudyView: View {
+        let example: TrainingExample
+        @Environment(\.colorScheme) private var scheme
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("Caso real \(example.contentType.capitalized)", systemImage: "quote.bubble.fill")
+                        .foregroundStyle(Theme.primary(scheme))
+                        .font(.headline)
+                    Spacer()
+                    Text("~\(example.response.predictedViews.formatted()) views")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(Theme.accent)
+                }
+
+                Text(example.visualDescription)
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondary(scheme))
+
+                if let highlight = example.response.highlights.first {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(Theme.accent)
+                        Text(highlight)
+                            .font(.footnote)
+                            .foregroundStyle(Theme.primary(scheme))
+                    }
+                }
+
+                Text("Fuente: dataset interno con clips analizados manualmente. Usamos estos patrones como referencia para tus diagnósticos.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.secondary(scheme))
+            }
+            .padding(14)
+            .background(Theme.panel(scheme).opacity(0.25), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.subtleStroke(scheme)))
+        }
+    }
+
     private func getButtonText() -> String {
         if viewModel.isAnalyzing {
             return "La IA está trabajando..."
@@ -475,7 +541,12 @@ struct ContentView: View {
         } else if viewModel.selectedVideoURL == nil {
             return "Subir video"
         } else if !subscriptionManager.isSubscribed {
-            return "Ver análisis"
+            let remaining = creditsManager.remainingAnalyses
+            if remaining > 0 {
+                return "Analizar (\(remaining)/3 restantes)"
+            } else {
+                return "Suscríbete para continuar"
+            }
         } else {
             return "Iniciar análisis"
         }
@@ -1310,7 +1381,7 @@ private struct MetricInsightChart: View {
             .shadow(color: color.opacity(0.25), radius: 6, y: 3)
 
             Path { path in
-                guard let first = clamped.first, let last = clamped.last else { return }
+                guard let first = clamped.first else { return }
                 path.move(to: CGPoint(x: 0, y: height))
                 path.addLine(to: CGPoint(x: 0, y: height - CGFloat(first) * height))
                 for (index, value) in clamped.enumerated() where index > 0 {
@@ -1480,7 +1551,6 @@ struct OnboardingView: View {
     }
 
     var body: some View {
-        let step = steps[index]
         ZStack {
             Theme.background(scheme).ignoresSafeArea()
             BackgroundGlow()
@@ -1496,20 +1566,15 @@ struct OnboardingView: View {
 
                 Spacer()
 
-                VStack(spacing: 16) {
-                    Image(systemName: step.icon)
-                        .font(.system(size: 48))
-                        .foregroundStyle(Theme.accent)
-                    Text(step.title)
-                        .font(.title2.bold())
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(Theme.primary(scheme))
-                    Text(step.description)
-                        .font(.body)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(Theme.secondary(scheme))
-                        .padding(.horizontal)
+                TabView(selection: $index) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { idx, step in
+                        stepView(step)
+                            .tag(idx)
+                            .padding(.horizontal)
+                    }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: 260)
 
                 HStack {
                     ForEach(steps.indices, id: \.self) { idx in
@@ -1535,6 +1600,24 @@ struct OnboardingView: View {
                 Spacer()
             }
             .padding(.vertical, 40)
+        }
+    }
+
+    @ViewBuilder
+    private func stepView(_ step: OnboardingStep) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: step.icon)
+                .font(.system(size: 48))
+                .foregroundStyle(Theme.accent)
+            Text(step.title)
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.primary(scheme))
+            Text(step.description)
+                .font(.body)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.secondary(scheme))
+                .padding(.horizontal)
         }
     }
 

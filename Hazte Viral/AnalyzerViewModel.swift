@@ -25,12 +25,13 @@ final class AnalyzerViewModel: ObservableObject {
     @Published var displayName = "Your video"
     @Published private(set) var history: [AnalysisReport] = []
 
+    let creditsManager: AnalysisCreditsManager
     private let service: AIAnalysisProviding
     private let historyStore: HistoryStore
 
-    init(service: AIAnalysisProviding? = nil, historyStore: HistoryStore = HistoryStore()) {
+    init(service: AIAnalysisProviding? = nil, historyStore: HistoryStore? = nil, creditsManager: AnalysisCreditsManager? = nil) {
         print("[Init] Inicializando AnalyzerViewModel...")
-        
+
         if let service = service {
             print("[Config] Usando servicio personalizado: \(type(of: service))")
             self.service = service
@@ -45,9 +46,10 @@ final class AnalyzerViewModel: ObservableObject {
             print("[Config] Servicio configurado: \(type(of: claudeService)) (sin mocks)")
             self.service = claudeService
         }
-        
-        self.historyStore = historyStore
-        history = historyStore.reports
+
+        self.historyStore = historyStore ?? HistoryStore()
+        self.creditsManager = creditsManager ?? AnalysisCreditsManager.shared
+        history = self.historyStore.reports
         print("[Init] ViewModel inicializado con \(history.count) reportes en historial")
     }
 
@@ -106,14 +108,27 @@ final class AnalyzerViewModel: ObservableObject {
 
     func analyze() async {
         print("[Analysis] Iniciando análisis...")
-        
+
         guard let videoURL = selectedVideoURL else {
             print("[Error] No hay video seleccionado")
             present(error: AnalysisError.invalidVideo)
             return
         }
 
+        // Verificar si es un resultado cacheado
         let hash = FileHasher.hash(of: videoURL)
+        let isCachedResult = hash != nil && history.first(where: { $0.videoHash == hash }) != nil
+
+        // Si NO es un resultado cacheado, verificar créditos
+        if !isCachedResult {
+            guard creditsManager.canAnalyze() else {
+                print("[Credits] Límite de análisis alcanzado")
+                // No mostrar error, ContentView manejará el paywall
+                return
+            }
+        }
+
+        // Cache check (no consume créditos)
         if let hash, let cached = history.first(where: { $0.videoHash == hash }) {
             print("[Cache] Reutilizando resultado previo para este video (hash coincidente)")
             report = cached
@@ -122,17 +137,21 @@ final class AnalyzerViewModel: ObservableObject {
 
         print("[Analysis] Analizando video: \(videoURL.lastPathComponent)")
         print("[Config] Servicio utilizado: \(type(of: service))")
-        
+
         isAnalyzing = true
         do {
             print("[Network] Llamando al servicio de análisis...")
             let result = try await service.analyze(videoURL: videoURL, title: displayName, videoHash: hash)
             print("[Analysis] Análisis completado exitosamente")
-            
+
+            // Consumir crédito DESPUÉS de análisis exitoso
+            creditsManager.consumeAnalysis()
+            print("[Credits] Crédito consumido - Restantes: \(creditsManager.remainingAnalyses)")
+
             report = result
             historyStore.add(result)
             history = historyStore.reports
-            
+
             print("[Result] \(result.predictedViews) vistas predichas")
         } catch {
             print("[Error] Error durante análisis: \(error)")
