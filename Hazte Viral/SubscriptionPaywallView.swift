@@ -33,7 +33,7 @@ struct SubscriptionPaywallView: View {
                 }
             }
         }
-        .onChange(of: subscriptionManager.isSubscribed) { isActive in
+        .onChange(of: subscriptionManager.isSubscribed) { _, isActive in
             if isActive { dismiss() }
         }
     }

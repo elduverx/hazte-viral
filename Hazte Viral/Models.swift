@@ -60,7 +60,7 @@ enum AnalysisError: LocalizedError {
         case .uploadFailed:
             return "Error al subir el video al analizador."
         case .unauthorized:
-            return "Clave API faltante o inválida. Define ANTHROPIC_API_KEY en el entorno o en Info.plist."
+            return "Clave API faltante o inválida. Define ANTHROPIC_API_KEY en Build Settings (Release), entorno o Info.plist."
         case .server(let message):
             return message
         }

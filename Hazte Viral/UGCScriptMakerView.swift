@@ -68,7 +68,7 @@ struct UGCScriptMakerView: View {
                 .foregroundStyle(textPrimary)
             }
         }
-        .onChange(of: viewModel.paywallTrigger) { _ in
+        .onChange(of: viewModel.paywallTrigger) { _, _ in
             showPaywall = true
         }
     }

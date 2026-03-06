@@ -94,10 +94,10 @@ struct ContentView: View {
         }, message: {
             Text(viewModel.errorMessage ?? "Error inesperado")
         })
-        .onChange(of: viewModel.report) { report in
+        .onChange(of: viewModel.report) { _, report in
             activeReport = report
         }
-        .onChange(of: subscriptionManager.isSubscribed) { isActive in
+        .onChange(of: subscriptionManager.isSubscribed) { _, isActive in
             if isActive { showPaywall = false }
             if isActive { hasPresentedPaywall = true }
         }
@@ -107,7 +107,7 @@ struct ContentView: View {
                 presentPaywallIfNeeded() 
             }
         }
-        .onChange(of: showTutorial) { _ in 
+        .onChange(of: showTutorial) { _, _ in 
             Task { 
                 await subscriptionManager.updateSubscriptionStatus()
                 presentPaywallIfNeeded() 
