@@ -1,0 +1,3 @@
+// Ajustes de build de la app. El APP_TOKEN real va en Secrets.xcconfig (no se sube a git).
+APP_TOKEN =
+#include? "Secrets.xcconfig"

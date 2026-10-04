@@ -55,7 +55,7 @@ El registro DNS `A` de `viral.elduverx.com` debe apuntar a la IP del VPS.
 ### App
 
 - `Hazte Viral/AIService.swift`: `backendURL = "https://viral.elduverx.com/api"`.
-- Xcode → target Hazte Viral → Build Settings → `APP_TOKEN`: el mismo valor que `APP_TOKEN` en `.env`
+- `Config/Secrets.xcconfig` (no se sube a git; copia `Secrets.xcconfig.example`): `APP_TOKEN = ` el mismo valor que en `.env`
   (llega a la app vía `Info.plist` → `AppToken`).
 
 ## Actualizar
