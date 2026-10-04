@@ -1,0 +1,19 @@
+{
+  "name": "hazteviral-backend",
+  "version": "1.0.0",
+  "description": "Proxy de Claude para la app Hazte Viral",
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0"
+  }
+}

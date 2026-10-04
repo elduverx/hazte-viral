@@ -36,13 +36,7 @@ final class AnalyzerViewModel: ObservableObject {
             print("[Config] Usando servicio personalizado: \(type(of: service))")
             self.service = service
         } else {
-            if let key = ClaudeConfig.apiKey, !key.isEmpty {
-                print("[Config] Claude API key detectada: \(String(key.prefix(8)))...")
-            } else {
-                print("[Warn] ANTHROPIC_API_KEY no está configurada; la llamada real a Claude fallará hasta agregarla")
-            }
-
-            let claudeService = ClaudeAIService(apiKey: ClaudeConfig.apiKey)
+            let claudeService = ClaudeAIService()
             print("[Config] Servicio configurado: \(type(of: claudeService)) (sin mocks)")
             self.service = claudeService
         }

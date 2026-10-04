@@ -20,12 +20,8 @@
 	<string>2</string>
 	<key>LSEnvironment</key>
 	<dict/>
-	<key>AnthropicAPIKey</key>
-	<string>$(ANTHROPIC_API_KEY)</string>
-	<key>AnthropicModel</key>
-	<string>$(ANTHROPIC_MODEL)</string>
-	<key>AnthropicMaxTokens</key>
-	<string>$(ANTHROPIC_MAX_TOKENS)</string>
+	<key>AppToken</key>
+	<string>$(APP_TOKEN)</string>
 	<key>SubscriptionProductIdentifiers</key>
 	<array>
 		<string>goviralpro1</string>

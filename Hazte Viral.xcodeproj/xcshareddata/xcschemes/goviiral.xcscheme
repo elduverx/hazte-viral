@@ -59,13 +59,6 @@
             ReferencedContainer = "container:Hazte Viral.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <EnvironmentVariables>
-         <EnvironmentVariable
-            key = "ANTHROPIC_API_KEY"
-            value = ""
-            isEnabled = "NO">
-         </EnvironmentVariable>
-      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
