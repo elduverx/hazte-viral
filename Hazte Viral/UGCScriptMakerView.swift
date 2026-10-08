@@ -7,747 +7,586 @@
 
 import SwiftUI
 
-@MainActor
 struct UGCScriptMakerView: View {
     @StateObject private var viewModel = UGCScriptViewModel()
+    @ObservedObject private var library = ScriptLibrary.shared
+    @ObservedObject private var quota = ScriptQuota.shared
     @EnvironmentObject private var subscriptionManager: SubscriptionManager
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.dismiss) private var dismiss
-    @State private var showPaywall = false
-    
-    private var textPrimary: Color { Theme.primary(scheme) }
-    private var textSecondary: Color { Theme.secondary(scheme) }
-    private var panel: Color { Theme.panel(scheme) }
-    private var stroke: Color { Theme.subtleStroke(scheme) }
-    
+
+    @State private var mode: Mode = .create
+    @State private var selectedScript: UGCScript?
+    @FocusState private var focusedField: Field?
+    @State private var showAllNiches = false
+    @State private var pendingAIAction: (() -> Void)?
+
+    private let collapsedNicheCount = 8
+
+    /// Los 8 nichos más comunes, más el elegido si está entre los ocultos.
+    private var visibleNiches: [BusinessNiche] {
+        guard !showAllNiches else { return BusinessNiche.allCases }
+        var niches = Array(BusinessNiche.allCases.prefix(collapsedNicheCount))
+        if let selected = BusinessNiche.named(viewModel.brief.nicheID), !niches.contains(where: { $0.id == selected.id }) {
+            niches.append(selected)
+        }
+        return niches
+    }
+
+    enum Mode: String, CaseIterable {
+        case create = "Crear"
+        case library = "Mis guiones"
+    }
+
+    enum Field: Hashable {
+        case customNiche, businessType, product, audience, benefit(Int)
+    }
+
     var body: some View {
-        CompatibleNavigationStack {
+        NavigationStack {
             ZStack {
                 Theme.background(scheme).ignoresSafeArea()
-                BackgroundGlow()
-                
-                ScrollView {
-                    VStack(spacing: 24) {
-                        header
+                BackgroundGlow().opacity(0.6)
 
-                        if !subscriptionManager.isSubscribed {
-                            subscriptionBanner
+                VStack(spacing: 0) {
+                    Picker("Modo", selection: $mode) {
+                        ForEach(Mode.allCases, id: \.self) { mode in
+                            Text(mode == .library && !library.scripts.isEmpty
+                                 ? "\(mode.rawValue) (\(library.scripts.count))" : mode.rawValue)
+                                .tag(mode)
                         }
-                        
-                        businessInfoSection
-                        contentConfigSection
-                        
-                        if !viewModel.generatedScripts.isEmpty {
-                            generatedScriptsSection
-                        }
-                        
-                        generateButton
                     }
-                    .padding()
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+
+                    switch mode {
+                    case .create: createFlow
+                    case .library: libraryList
+                    }
+                }
+
+                if viewModel.isGenerating {
+                    AIProcessingView(
+                        title: viewModel.brief.count == 1 ? "Creando tu guion" : "Creando \(viewModel.brief.count) guiones",
+                        stages: ScriptGenerationStage.allCases.map(\.title),
+                        currentStage: viewModel.generationStage.rawValue,
+                        onCancel: { viewModel.cancelGeneration() }
+                    )
+                }
+            }
+            .animation(.easeInOut(duration: 0.25), value: viewModel.isGenerating)
+            .navigationTitle("Script Maker")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProStatusButton { viewModel.showPaywall = true }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Listo") { focusedField = nil }
                 }
             }
         }
-        .sheet(isPresented: $showPaywall) {
-            SubscriptionPaywallView()
-        }
-        .alert("Error", isPresented: $viewModel.showError) {
+        .sheet(item: $selectedScript) { UGCScriptDetailView(script: $0) }
+        .sheet(isPresented: $viewModel.showPaywall) { SubscriptionPaywallView() }
+        .aiConsentSheet(pendingAction: $pendingAIAction)
+        .alert("No se pudo continuar", isPresented: errorBinding) {
             Button("Entendido", role: .cancel) {}
         } message: {
-            Text(viewModel.errorMessage ?? "Error inesperado")
-        }
-        .sheet(isPresented: $viewModel.showScriptDetail) {
-            if let script = viewModel.selectedScript {
-                UGCScriptDetailView(script: script)
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Cerrar") {
-                    dismiss()
-                }
-                .foregroundStyle(textPrimary)
-            }
-        }
-        .onChange(of: viewModel.paywallTrigger) { _, _ in
-            showPaywall = true
-        }
-    }
-    
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("AI UGC Script Maker")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundStyle(textPrimary)
-                    Text("Guiones virales para tu negocio")
-                        .font(.subheadline)
-                        .foregroundStyle(textSecondary)
-                }
-                Spacer()
-                Image(systemName: "video.fill")
-                    .font(.title2)
-                    .foregroundStyle(Theme.accentStart)
-                    .padding(12)
-                    .background(panel, in: Circle())
-            }
-            
-            if !subscriptionManager.isSubscribed {
-                HStack(spacing: 8) {
-                    Image(systemName: "gift.fill")
-                        .foregroundStyle(.green)
-                    Text("3 guiones gratis al mes")
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(textSecondary)
-                    Spacer()
-                    Text("Usados: \(viewModel.creditsManager.monthlyUsage)/3")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.accentStart)
-                }
-                .padding(.top, 8)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    
-    private var subscriptionBanner: some View {
-        GlassCard {
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Guiones ilimitados")
-                        .font(.headline)
-                        .foregroundStyle(textPrimary)
-                    Text("Acceso a todos los nichos y exportación avanzada")
-                        .font(.caption)
-                        .foregroundStyle(textSecondary)
-                }
-                
-                Spacer()
-                
-                Button("Suscribirse") {
-                    showPaywall = true
-                }
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Theme.accentStart)
-                .foregroundStyle(.white)
-                .cornerRadius(12)
-            }
+            Text(viewModel.errorMessage ?? "")
         }
     }
 
-    
-    private var businessInfoSection: some View {
-        VStack(spacing: 0) {
-            // Section Header with glass morphism
-            HStack {
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Theme.accentStart.opacity(0.8),
-                                        Theme.accentEnd.opacity(0.9)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 44, height: 44)
-                            .shadow(color: Theme.accentStart.opacity(0.3), radius: 8, x: 0, y: 4)
-                        
-                        Image(systemName: "building.2.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Información del negocio")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(textPrimary)
-                        
-                        Text("Cuéntanos sobre tu empresa")
-                            .font(.caption)
-                            .foregroundStyle(textSecondary)
+    private var errorBinding: Binding<Bool> {
+        Binding(get: { viewModel.errorMessage != nil },
+                set: { if !$0 { viewModel.errorMessage = nil } })
+    }
+
+    // MARK: - Flujo de creación
+
+    private var createFlow: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                StepIndicator(current: viewModel.step)
+
+                Group {
+                    switch viewModel.step {
+                    case .business: businessStep
+                    case .style: styleStep
+                    case .results: resultsStep
                     }
                 }
-                
-                Spacer()
-                
-                // Progress indicator
-                ZStack {
-                    Circle()
-                        .stroke(stroke.opacity(0.3), lineWidth: 2)
-                        .frame(width: 24, height: 24)
-                    
-                    Circle()
-                        .trim(from: 0, to: businessFormProgress)
-                        .stroke(Theme.accentStart, lineWidth: 2)
-                        .frame(width: 24, height: 24)
-                        .rotationEffect(.degrees(-90))
-                        .animation(.easeInOut(duration: 0.3), value: businessFormProgress)
+                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                        removal: .opacity))
+            }
+            .padding()
+            .animation(.snappy(duration: 0.3), value: viewModel.step)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) { bottomBar }
+    }
+
+    // Paso 1
+    private var businessStep: some View {
+        VStack(spacing: 16) {
+            FormCard(title: "¿Cuál es tu nicho?") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
+                    ForEach(visibleNiches) { niche in
+                        SelectableChip(icon: niche.icon, title: niche.name,
+                                       isSelected: viewModel.brief.nicheID == niche.id) {
+                            viewModel.brief.nicheID = niche.id
+                        }
+                    }
+                    SelectableChip(icon: "square.and.pencil", title: "Otro",
+                                   isSelected: viewModel.brief.isCustomNiche) {
+                        viewModel.brief.nicheID = BusinessNiche.otherID
+                        focusedField = .customNiche
+                    }
+                }
+
+                if BusinessNiche.allCases.count > collapsedNicheCount {
+                    Button {
+                        showAllNiches.toggle()
+                    } label: {
+                        Label(showAllNiches ? "Ver menos" : "Ver más nichos (\(BusinessNiche.allCases.count - collapsedNicheCount))",
+                              systemImage: showAllNiches ? "chevron.up" : "chevron.down")
+                            .font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .foregroundStyle(Theme.accentStart)
+                }
+
+                if viewModel.brief.isCustomNiche {
+                    InputField(title: "Escribe tu nicho", placeholder: "Tatuajes, coaching, gaming, apicultura…",
+                               text: $viewModel.brief.customNiche)
+                        .focused($focusedField, equals: .customNiche)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .businessType }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-            .background(
-                .ultraThinMaterial,
-                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(scheme == .dark ? 0.1 : 0.3),
-                                Color.white.opacity(scheme == .dark ? 0.05 : 0.1)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: Color.black.opacity(scheme == .dark ? 0.3 : 0.1),
-                radius: 20,
-                x: 0,
-                y: 10
-            )
-            
-            // Form Fields with enhanced glass cards
-            VStack(spacing: 16) {
-                // Business Niche Picker
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Nicho del negocio")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(textPrimary)
-                    
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(BusinessNiche.allCases, id: \.id) { niche in
-                                EnhancedNicheCard(
-                                    niche: niche,
-                                    isSelected: viewModel.selectedNiche.id == niche.id
-                                ) {
-                                    viewModel.selectedNiche = niche
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 4)
-                    }
+            .animation(.snappy(duration: 0.25), value: viewModel.brief.isCustomNiche)
+            .animation(.snappy(duration: 0.25), value: showAllNiches)
+
+            FormCard(title: "Cuéntanos más") {
+                VStack(spacing: 14) {
+                    InputField(title: "Tipo de negocio", placeholder: "Restaurante italiano, clínica dental…",
+                               text: $viewModel.brief.businessType)
+                        .focused($focusedField, equals: .businessType)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .product }
+                    InputField(title: "Producto o servicio", placeholder: "Pizza de masa madre, blanqueamiento…",
+                               text: $viewModel.brief.productService)
+                        .focused($focusedField, equals: .product)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .audience }
+                    InputField(title: "Público objetivo", placeholder: "Familias jóvenes de 25-40 años…",
+                               text: $viewModel.brief.targetAudience)
+                        .focused($focusedField, equals: .audience)
+                        .submitLabel(.next)
+                        .onSubmit { focusedField = .benefit(0) }
                 }
-                
-                EnhancedTextField(
-                    icon: "storefront.fill",
-                    title: "Tipo de negocio",
-                    text: $viewModel.businessType,
-                    placeholder: "Restaurante italiano, Clínica dental, Gimnasio...",
-                    iconColor: .blue
-                )
-                
-                EnhancedTextField(
-                    icon: "tag.fill",
-                    title: "Producto/Servicio específico",
-                    text: $viewModel.productService,
-                    placeholder: "Pizza artesanal, Blanqueamiento dental, Entrenamiento...",
-                    iconColor: .green
-                )
-                
-                EnhancedTextField(
-                    icon: "person.3.fill",
-                    title: "Público objetivo",
-                    text: $viewModel.targetAudience,
-                    placeholder: "Familias jóvenes 25-40 años, Mujeres profesionales...",
-                    iconColor: .purple
-                )
-                
-                // Key Benefits with enhanced design
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        HStack(spacing: 8) {
-                            Image(systemName: "star.fill")
-                                .font(.title3)
-                                .foregroundStyle(.orange)
-                            Text("Beneficios clave")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(textPrimary)
-                        }
-                        
-                        Spacer()
-                        
-                        if viewModel.keyBenefits.count < 5 {
-                            Button {
-                                viewModel.addBenefit()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "plus")
-                                        .font(.caption)
-                                    Text("Agregar")
-                                        .font(.caption.weight(.medium))
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Theme.accentStart.opacity(0.1))
-                                .foregroundStyle(Theme.accentStart)
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Theme.accentStart.opacity(0.3), lineWidth: 1)
-                                )
-                            }
-                        }
-                    }
-                    
-                    ForEach(Array(viewModel.keyBenefits.enumerated()), id: \.offset) { index, benefit in
-                        HStack(spacing: 12) {
-                            Text("\(index + 1)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 24, height: 24)
-                                .background(Theme.accentStart, in: Circle())
-                            
-                            TextField("Beneficio importante de tu producto/servicio", text: $viewModel.keyBenefits[index])
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(stroke.opacity(0.5), lineWidth: 1)
-                                )
-                            
-                            if viewModel.keyBenefits.count > 1 {
+            }
+
+            FormCard(title: "Beneficios clave", trailing: benefitsCounter) {
+                VStack(spacing: 10) {
+                    ForEach(viewModel.brief.benefits.indices, id: \.self) { index in
+                        HStack(spacing: 10) {
+                            InputField(title: nil, placeholder: "Ej. Entrega en 30 minutos",
+                                       text: $viewModel.brief.benefits[index])
+                                .focused($focusedField, equals: .benefit(index))
+                            if viewModel.brief.benefits.count > 1 {
                                 Button {
                                     viewModel.removeBenefit(at: index)
                                 } label: {
                                     Image(systemName: "minus.circle.fill")
                                         .font(.title3)
-                                        .foregroundStyle(.red)
+                                        .foregroundStyle(Theme.secondary(scheme))
                                 }
+                                .accessibilityLabel("Quitar beneficio")
                             }
                         }
                     }
-                }
-            }
-            .padding(.top, 20)
-        }
-    }
-    
-    private var businessFormProgress: Double {
-        let fields = [viewModel.businessType, viewModel.productService, viewModel.targetAudience]
-        let nicheSelected = !viewModel.selectedNiche.id.isEmpty ? 1 : 0
-        let benefitsCount = viewModel.keyBenefits.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
-        
-        let filledFields = fields.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
-        let totalItems = fields.count + 1 + min(benefitsCount, 1) // 3 fields + niche + at least 1 benefit
-        let completedItems = filledFields + nicheSelected + min(benefitsCount, 1)
-        
-        return Double(completedItems) / Double(totalItems)
-    }
-    
-    private var contentConfigSection: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 16) {
-                Label("Configuración del contenido", systemImage: "slider.horizontal.3")
-                    .font(.headline)
-                    .foregroundStyle(textPrimary)
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    // Duration Picker
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Duración del reel")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(textPrimary)
-                        
-                        Picker("Duración", selection: $viewModel.selectedDuration) {
-                            ForEach(ScriptDuration.allCases, id: \.self) { duration in
-                                Text(duration.displayName).tag(duration)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    
-                    // Hook Type
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Tipo de hook")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(textPrimary)
-                        
-                        Menu {
-                            ForEach(HookType.allCases, id: \.self) { hookType in
-                                Button {
-                                    viewModel.selectedHookType = hookType
-                                } label: {
-                                    VStack(alignment: .leading) {
-                                        Text(hookType.rawValue)
-                                        Text(hookType.description)
-                                            .font(.caption)
-                                    }
-                                }
-                            }
+                    if viewModel.brief.benefits.count < ScriptBrief.maxBenefits {
+                        Button {
+                            viewModel.addBenefit()
+                            focusedField = .benefit(viewModel.brief.benefits.count - 1)
                         } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(viewModel.selectedHookType.rawValue)
-                                        .foregroundStyle(textPrimary)
-                                    Text(viewModel.selectedHookType.description)
-                                        .font(.caption)
-                                        .foregroundStyle(textSecondary)
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.down")
-                                    .foregroundStyle(textSecondary)
-                            }
-                            .padding()
-                            .background(panel, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(stroke))
+                            Label("Añadir beneficio", systemImage: "plus")
+                                .font(.subheadline.weight(.medium))
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                    }
-                    
-                    // Tone
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Tono del contenido")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(textPrimary)
-                        
-                        Picker("Tono", selection: $viewModel.selectedTone) {
-                            ForEach(ScriptTone.allCases, id: \.self) { tone in
-                                Text(tone.rawValue).tag(tone)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    
-                    // Script Count
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Número de guiones")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(textPrimary)
-                        
-                        HStack {
-                            Stepper(value: $viewModel.scriptCount, in: 1...10) {
-                                Text("\(viewModel.scriptCount) guion\(viewModel.scriptCount == 1 ? "" : "es")")
-                                    .foregroundStyle(textPrimary)
-                            }
-                        }
+                        .foregroundStyle(Theme.accentStart)
                     }
                 }
             }
         }
     }
-    
-    private var generateButton: some View {
-        Button {
-            Task {
-                await viewModel.generateScripts()
-            }
-        } label: {
-            HStack {
-                if viewModel.isGenerating {
-                    ProgressView()
-                        .compatibleTint(.white)
-                        .scaleEffect(0.9)
-                } else {
-                    Image(systemName: "wand.and.stars")
+
+    private var benefitsCounter: Text {
+        Text("\(viewModel.brief.benefits.count)/\(ScriptBrief.maxBenefits)")
+    }
+
+    // Paso 2
+    private var styleStep: some View {
+        VStack(spacing: 16) {
+            FormCard(title: "Duración del reel") {
+                Picker("Duración", selection: $viewModel.brief.duration) {
+                    ForEach(ScriptDuration.allCases, id: \.self) { duration in
+                        Text("\(duration.shortName) · \(duration.rawValue)").tag(duration)
+                    }
                 }
-                
-                Text(viewModel.isGenerating ? "Generando guiones..." : "Generar \(viewModel.scriptCount) guión\(viewModel.scriptCount == 1 ? "" : "es")")
-                    .fontWeight(.bold)
-                
-                Spacer()
+                .pickerStyle(.segmented)
             }
-            .font(.title3)
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(Theme.recordRed)
-            .foregroundStyle(.white)
-            .cornerRadius(18)
-            .shadow(color: Color.red.opacity(0.3), radius: 16, y: 8)
+
+            FormCard(title: "Tipo de hook") {
+                VStack(spacing: 8) {
+                    ForEach(HookType.allCases, id: \.self) { hook in
+                        HookOption(hook: hook, isSelected: viewModel.brief.hookType == hook) {
+                            viewModel.brief.hookType = hook
+                        }
+                    }
+                }
+            }
+
+            FormCard(title: "Tono") {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
+                    ForEach(ScriptTone.allCases, id: \.self) { tone in
+                        SelectableChip(icon: nil, title: tone.rawValue, isSelected: viewModel.brief.tone == tone) {
+                            viewModel.brief.tone = tone
+                        }
+                    }
+                }
+            }
+
+            FormCard(title: "Guiones a generar") {
+                Picker("Cantidad", selection: $viewModel.brief.count) {
+                    ForEach(ScriptBrief.countRange, id: \.self) { Text("\($0)").tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if !subscriptionManager.isSubscribed {
+                quotaBanner
+            }
+        }
+    }
+
+    private var quotaBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: quota.remaining > 0 ? "gift.fill" : "lock.fill")
+                .foregroundStyle(quota.remaining > 0 ? .green : Theme.accentStart)
+            Text(quota.remaining > 0
+                 ? "Te quedan \(quota.remaining) de \(ScriptQuota.freeMonthlyGenerations) generaciones gratis este mes"
+                 : "Has usado tus generaciones gratis de este mes")
+                .font(.footnote)
+                .foregroundStyle(Theme.secondary(scheme))
+            Spacer(minLength: 0)
+            Button("Pro") { viewModel.showPaywall = true }
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(Theme.accentStart)
+        }
+        .padding(14)
+        .background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    // Paso 3
+    private var resultsStep: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(viewModel.results.count == 1 ? "Tu guion está listo" : "\(viewModel.results.count) guiones listos")
+                .font(.title3.bold())
+                .foregroundStyle(Theme.primary(scheme))
+            Text("Guardados en «Mis guiones». Ábrelos para leerlos en el teleprompter o exportarlos.")
+                .font(.footnote)
+                .foregroundStyle(Theme.secondary(scheme))
+
+            ForEach(viewModel.results) { script in
+                ScriptRow(script: script) { selectedScript = script }
+            }
+        }
+    }
+
+    // Barra inferior
+    @ViewBuilder
+    private var bottomBar: some View {
+        HStack(spacing: 12) {
+            switch viewModel.step {
+            case .business:
+                PrimaryButton(title: "Continuar", icon: "arrow.right") {
+                    focusedField = nil
+                    viewModel.continueToStyle()
+                }
+            case .style:
+                SecondaryButton(icon: "chevron.left", label: "Atrás") { viewModel.back() }
+                PrimaryButton(title: viewModel.brief.count == 1 ? "Generar guion" : "Generar \(viewModel.brief.count) guiones",
+                              icon: "wand.and.stars") {
+                    runWithAIConsent($pendingAIAction) { Task { await viewModel.generate() } }
+                }
+            case .results:
+                SecondaryButton(icon: "square.and.pencil", label: "Nuevo brief") { viewModel.startOver() }
+                PrimaryButton(title: "Generar otros", icon: "arrow.clockwise") {
+                    runWithAIConsent($pendingAIAction) { Task { await viewModel.generate() } }
+                }
+            }
         }
         .disabled(viewModel.isGenerating)
-        .opacity(viewModel.isGenerating ? 0.7 : 1)
+        .padding(.horizontal)
+        .padding(.vertical, 12)
+        .background(.bar)
     }
-    
-    private var generatedScriptsSection: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Label("Guiones generados", systemImage: "list.bullet.below.rectangle")
-                        .font(.headline)
-                        .foregroundStyle(textPrimary)
-                    
-                    Spacer()
-                    
-                    Button {
-                        viewModel.clearForm()
-                    } label: {
-                        Text("Limpiar")
-                            .font(.caption)
-                            .foregroundStyle(Theme.accentStart)
-                    }
-                }
-                
-                LazyVStack(spacing: 12) {
-                    ForEach(viewModel.generatedScripts) { script in
-                        ScriptCard(script: script) {
-                            viewModel.selectScript(script)
+
+    // MARK: - Biblioteca
+
+    @ViewBuilder
+    private var libraryList: some View {
+        if library.scripts.isEmpty {
+            ContentUnavailableView {
+                Label("Aún no tienes guiones", systemImage: "doc.text")
+            } description: {
+                Text("Los guiones que generes se guardan aquí automáticamente.")
+            } actions: {
+                Button("Crear el primero") { mode = .create }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accentStart)
+            }
+        } else {
+            List {
+                ForEach(library.scripts) { script in
+                    ScriptRow(script: script) { selectedScript = script }
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .swipeActions {
+                            Button(role: .destructive) { library.delete(script) } label: {
+                                Label("Borrar", systemImage: "trash")
+                            }
                         }
-                    }
                 }
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
         }
     }
 }
 
-struct NicheCard: View {
-    let niche: BusinessNiche
-    let isSelected: Bool
-    let onTap: () -> Void
+// MARK: - Componentes
+
+private struct StepIndicator: View {
+    let current: UGCScriptViewModel.Step
     @Environment(\.colorScheme) private var scheme
-    
+
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 8) {
-                Image(systemName: niche.icon)
-                    .font(.title2)
-                    .foregroundStyle(isSelected ? .white : Theme.accentStart)
-                
-                Text(niche.name)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(isSelected ? .white : Theme.primary(scheme))
-                    .multilineTextAlignment(.center)
+        HStack(spacing: 8) {
+            ForEach(UGCScriptViewModel.Step.allCases, id: \.self) { step in
+                let reached = step.rawValue <= current.rawValue
+                VStack(spacing: 6) {
+                    Capsule()
+                        .fill(reached ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.subtleStroke(scheme)))
+                        .frame(height: 4)
+                    Text(step.title)
+                        .font(.caption.weight(step == current ? .semibold : .regular))
+                        .foregroundStyle(reached ? Theme.primary(scheme) : Theme.secondary(scheme))
+                }
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
-            .frame(minWidth: 100)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Paso \(current.rawValue + 1) de \(UGCScriptViewModel.Step.allCases.count): \(current.title)")
+    }
+}
+
+private struct FormCard<Content: View>: View {
+    let title: String
+    var trailing: Text? = nil
+    @ViewBuilder let content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(Theme.primary(scheme))
+                Spacer()
+                trailing?
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondary(scheme))
+            }
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.subtleStroke(scheme)))
+    }
+}
+
+private struct InputField: View {
+    let title: String?
+    let placeholder: String
+    @Binding var text: String
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Theme.secondary(scheme))
+            }
+            TextField(placeholder, text: $text, axis: .vertical)
+                .lineLimit(1...3)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+}
+
+private struct SelectableChip: View {
+    let icon: String?
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                if let icon {
+                    Image(systemName: icon).font(.title3)
+                }
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity, minHeight: icon == nil ? 40 : 70)
+            .padding(.horizontal, 6)
+            .foregroundStyle(isSelected ? .white : Theme.primary(scheme))
             .background(
-                isSelected ? Theme.accentStart : Theme.panel(scheme),
-                in: RoundedRectangle(cornerRadius: 12)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Theme.accentStart : Theme.subtleStroke(scheme))
+                isSelected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.panel(scheme)),
+                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
             )
         }
         .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: isSelected)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
-struct CustomTextField: View {
-    let title: String
-    @Binding var text: String
-    let placeholder: String
+private struct HookOption: View {
+    let hook: HookType
+    let isSelected: Bool
+    let action: () -> Void
     @Environment(\.colorScheme) private var scheme
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Theme.primary(scheme))
-            
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder)
-        }
-    }
-}
 
-struct ScriptCard: View {
-    let script: UGCScript
-    let onTap: () -> Void
-    @Environment(\.colorScheme) private var scheme
-    
     var body: some View {
-        Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(script.title)
-                            .font(.headline)
-                            .foregroundStyle(Theme.primary(scheme))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        
-                        Text(script.duration.displayName)
-                            .font(.caption)
-                            .foregroundStyle(Theme.secondary(scheme))
-                    }
-                    
-                    Spacer()
-                    
-                    VStack(alignment: .trailing, spacing: 4) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "flame.fill")
-                                .foregroundStyle(.orange)
-                            Text("\(script.hookScore)")
-                                .font(.headline.bold())
-                                .foregroundStyle(.orange)
-                        }
-                        
-                        Text("Hook Score")
-                            .font(.caption2)
-                            .foregroundStyle(Theme.secondary(scheme))
-                    }
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: hook.icon)
+                    .font(.body)
+                    .foregroundStyle(isSelected ? .white : Theme.accentStart)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        isSelected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.accentStart.opacity(0.12)),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hook.rawValue)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.primary(scheme))
+                    Text(hook.description)
+                        .font(.caption)
+                        .foregroundStyle(Theme.secondary(scheme))
                 }
-                
+                Spacer()
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? Theme.accentStart : Theme.subtleStroke(scheme))
+            }
+            .padding(10)
+            .background(isSelected ? Theme.accentStart.opacity(0.08) : .clear,
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: isSelected)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct ScriptRow: View {
+    let script: UGCScript
+    let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top) {
+                    Text(script.title)
+                        .font(.headline)
+                        .foregroundStyle(Theme.primary(scheme))
+                        .multilineTextAlignment(.leading)
+                    Spacer()
+                    Label("\(script.hookScore)", systemImage: "flame.fill")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.orange)
+                }
                 Text(script.hook)
                     .font(.subheadline)
-                    .foregroundStyle(Theme.primary(scheme))
+                    .foregroundStyle(Theme.secondary(scheme))
                     .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                
-                HStack {
-                    Label("\(script.shotList.count) tomas", systemImage: "camera.fill")
-                    
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 12) {
+                    Label("~\(script.estimatedSeconds) s", systemImage: "clock")
+                    Label("\(script.shotList.count) tomas", systemImage: "camera")
                     Spacer()
-                    
-                    Label("\(script.subtitles.count) subtítulos", systemImage: "text.bubble.fill")
+                    Text(script.createdAt.formatted(.relative(presentation: .named).locale(Locale(identifier: "es_ES"))))
                 }
                 .font(.caption)
                 .foregroundStyle(Theme.secondary(scheme))
             }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.subtleStroke(scheme)))
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.subtleStroke(scheme)))
         }
         .buttonStyle(.plain)
     }
 }
 
-struct EnhancedTextField: View {
-    let icon: String
+private struct PrimaryButton: View {
     let title: String
-    @Binding var text: String
-    let placeholder: String
-    let iconColor: Color
-    @Environment(\.colorScheme) private var scheme
-    
+    let icon: String
+    let action: () -> Void
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .foregroundStyle(iconColor)
-                
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Theme.primary(scheme))
-            }
-            
-            TextField(placeholder, text: $text)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-                .background(
-                    .ultraThinMaterial,
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(scheme == .dark ? 0.1 : 0.2),
-                                    Color.clear
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
-                )
-                .shadow(
-                    color: Color.black.opacity(scheme == .dark ? 0.2 : 0.05),
-                    radius: 8,
-                    x: 0,
-                    y: 2
-                )
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 15)
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .foregroundStyle(.white)
         }
     }
 }
 
-struct EnhancedNicheCard: View {
-    let niche: BusinessNiche
-    let isSelected: Bool
-    let onTap: () -> Void
+private struct SecondaryButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
     @Environment(\.colorScheme) private var scheme
-    
+
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            isSelected
-                            ? LinearGradient(
-                                colors: [Theme.accentStart, Theme.accentEnd],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                            : LinearGradient(
-                                colors: [Color.clear, Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 40, height: 40)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(
-                                    isSelected ? Color.clear : Theme.subtleStroke(scheme),
-                                    lineWidth: 1
-                                )
-                        )
-                    
-                    Image(systemName: niche.icon)
-                        .font(.title3)
-                        .foregroundStyle(isSelected ? .white : Theme.accentStart)
-                }
-                
-                Text(niche.name)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(isSelected ? Theme.accentStart : Theme.primary(scheme))
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
-            .frame(minWidth: 100)
-            .background(
-                .ultraThinMaterial,
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        isSelected
-                        ? LinearGradient(
-                            colors: [Theme.accentStart.opacity(0.5), Theme.accentStart.opacity(0.3)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        : LinearGradient(
-                            colors: [
-                                Color.white.opacity(scheme == .dark ? 0.1 : 0.2),
-                                Color.clear
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isSelected
-                ? Theme.accentStart.opacity(0.3)
-                : Color.black.opacity(scheme == .dark ? 0.2 : 0.05),
-                radius: isSelected ? 12 : 6,
-                x: 0,
-                y: isSelected ? 4 : 2
-            )
-            .scaleEffect(isSelected ? 1.05 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: isSelected)
+        Button(action: action) {
+            Label(label, systemImage: icon)
+                .font(.headline)
+                .padding(.vertical, 15)
+                .padding(.horizontal, 18)
+                .background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .foregroundStyle(Theme.primary(scheme))
         }
-        .buttonStyle(.plain)
     }
 }
 

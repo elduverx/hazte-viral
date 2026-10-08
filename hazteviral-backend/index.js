@@ -1,5 +1,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -28,6 +30,11 @@ const anthropic = new Anthropic();
 const app = express();
 app.set('trust proxy', 1); // Detrás de Caddy: usar la IP real del cliente
 app.use(express.json({ limit: '25mb' })); // Los frames del vídeo van en base64
+
+// Política de privacidad pública (enlazada desde la app y App Store Connect)
+const privacyHtml = fs.readFileSync(path.join(__dirname, 'privacy.html'), 'utf8')
+    .replaceAll('{{CONTACT_EMAIL}}', (process.env.CONTACT_EMAIL || '').replace(/[<>"&]/g, ''));
+app.get('/privacy', (req, res) => res.type('html').send(privacyHtml));
 
 // Solo la app (con el token compartido) puede usar la API
 app.use('/api', (req, res, next) => {
@@ -138,12 +145,25 @@ Analiza estos ${frameCount} frames en orden cronológico siguiendo el método ob
 5. Texto: Extrae texto visible y especifica frame
 6. CTA: Solo si es explícito y visible
 7. Diagnóstico: Con evidencias específicas de los frames
+8. Puntúa de 0 a 10, cada una con un motivo breve que cite frames concretos:
+   - hook: fuerza de los frames 1-2 para detener el scroll
+   - visual_quality: luz, encuadre, nitidez y composición
+   - clarity: ¿se entiende de qué va el vídeo sin sonido en los primeros segundos?
+   - pacing: cambios de plano y dinamismo entre frames
 
 Devuelve EXACTAMENTE este JSON (sin texto adicional):
 
 {
   "video_quality_score": número_0_10,
   "hook_score": número_0_10,
+  "clarity_score": número_0_10,
+  "pacing_score": número_0_10,
+  "score_reasons": {
+    "hook": "motivo_breve_citando_frames",
+    "visual_quality": "motivo_breve_citando_frames",
+    "clarity": "motivo_breve_citando_frames",
+    "pacing": "motivo_breve_citando_frames"
+  },
   "emotion_detected": "string_o_neutral",
   "main_topic": "tema_basado_en_frames_visibles",
   "editing_pace": "lento_medio_rapido",

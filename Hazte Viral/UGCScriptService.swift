@@ -7,27 +7,34 @@
 
 import Foundation
 
+/// Etapas reales de la generación, para la pantalla de carga.
+enum ScriptGenerationStage: Int, CaseIterable {
+    case sending, writing, finishing
+
+    var title: String {
+        switch self {
+        case .sending: return "Enviando tu brief"
+        case .writing: return "La IA está escribiendo los guiones"
+        case .finishing: return "Preparando tomas y subtítulos"
+        }
+    }
+}
+
 protocol UGCScriptGenerating {
-    func generateScript(request: ScriptGenerationRequest) async throws -> UGCScript
-    func generateMultipleScripts(request: ScriptGenerationRequest, count: Int) async throws -> [UGCScript]
+    func generateScripts(request: ScriptGenerationRequest, count: Int,
+                         onStage: @escaping @MainActor (ScriptGenerationStage) -> Void) async throws -> [UGCScript]
 }
 
 final class ClaudeUGCScriptService: UGCScriptGenerating {
     private let session: URLSession
-    
+
     init(session: URLSession = .shared) {
         self.session = session
     }
-    
-    func generateScript(request: ScriptGenerationRequest) async throws -> UGCScript {
-        let scripts = try await generateMultipleScripts(request: request, count: 1)
-        guard let script = scripts.first else {
-            throw ScriptError.generationFailed
-        }
-        return script
-    }
-    
-    func generateMultipleScripts(request: ScriptGenerationRequest, count: Int) async throws -> [UGCScript] {
+
+    func generateScripts(request: ScriptGenerationRequest, count: Int,
+                         onStage: @escaping @MainActor (ScriptGenerationStage) -> Void) async throws -> [UGCScript] {
+        await onStage(.sending)
         print("[UGC] Enviando request para \(count) guiones...")
         let rawContent = try await BackendClient.post("scripts", body: [
             "businessType": request.businessType,
@@ -40,210 +47,111 @@ final class ClaudeUGCScriptService: UGCScriptGenerating {
             "tone": request.tone.rawValue,
             "keyBenefits": request.keyBenefits,
             "count": count
-        ], session: session)
-        
-        print("[UGC] Respuesta recibida: \(rawContent.prefix(200))...")
-        
-        return try parseScriptsFromResponse(rawContent, request: request)
+        ], session: session, onUploaded: { onStage(.writing) })
+
+        await onStage(.finishing)
+        let scripts = try parseScripts(from: rawContent, request: request)
+        print("[UGC] \(scripts.count) guiones parseados")
+        return scripts
     }
-    
-    private func parseScriptsFromResponse(_ response: String, request: ScriptGenerationRequest) throws -> [UGCScript] {
-        let cleanedResponse = extractJSONFromResponse(response)
-        
-        guard let data = cleanedResponse.data(using: .utf8) else {
-            print("[UGC] Failed to convert cleaned response to data")
+
+    private func parseScripts(from response: String, request: ScriptGenerationRequest) throws -> [UGCScript] {
+        // Claude puede envolver el JSON en ```json ... ```: nos quedamos con el array.
+        guard let start = response.firstIndex(of: "["),
+              let end = response.lastIndex(of: "]"),
+              start < end,
+              let data = String(response[start...end]).data(using: .utf8) else {
+            print("[UGC] La respuesta no contiene un array JSON: \(response.prefix(300))")
             throw ScriptError.generationFailed
         }
-        
+
+        let decoded: [ScriptResponse]
         do {
-            let scriptResponses = try JSONDecoder().decode([ScriptResponse].self, from: data)
-            
-            return scriptResponses.map { scriptResponse in
-                UGCScript(
-                    id: UUID(),
-                    title: scriptResponse.title,
-                    createdAt: Date(),
-                    businessType: request.businessType,
-                    productService: request.productService,
-                    targetAudience: request.targetAudience,
-                    duration: request.duration,
-                    hook: scriptResponse.hook,
-                    body: scriptResponse.body,
-                    cta: scriptResponse.cta,
-                    subtitles: scriptResponse.subtitles.map { subtitle in
-                        SubtitleSegment(
-                            text: subtitle.text,
-                            startTime: subtitle.startTime,
-                            endTime: subtitle.endTime,
-                            position: SubtitlePosition(rawValue: subtitle.position) ?? .bottom
-                        )
-                    },
-                    shotList: scriptResponse.shotList.map { shot in
-                        ShotInstruction(
-                            sequence: shot.sequence,
-                            description: shot.description,
-                            duration: shot.duration,
-                            cameraAngle: CameraAngle(rawValue: shot.cameraAngle) ?? .mediumShot,
-                            notes: shot.notes
-                        )
-                    },
-                    hookScore: scriptResponse.hookScore,
-                    niche: request.niche
-                )
-            }
-            
-        } catch let decodingError as DecodingError {
-            print("[UGC] Decoding error: \(decodingError)")
-            print("[UGC] Cleaned response length: \(cleanedResponse.count)")
-            print("[UGC] Cleaned response: \(cleanedResponse)")
-            
-            if cleanedResponse.isEmpty {
-                print("[UGC] Response is empty after cleaning")
-            } else if !cleanedResponse.hasPrefix("[") {
-                print("[UGC] Response doesn't start with '[' - not a JSON array")
-            } else if !cleanedResponse.hasSuffix("]") {
-                print("[UGC] Response doesn't end with ']' - possibly truncated")
-                print("[UGC] Last 100 characters: \(String(cleanedResponse.suffix(100)))")
-            }
-            
-            throw ScriptError.generationFailed
+            decoded = try JSONDecoder().decode([ScriptResponse].self, from: data)
         } catch {
-            print("[UGC] Unexpected error parsing JSON: \(error)")
-            print("[UGC] Response: \(cleanedResponse)")
+            print("[UGC] Error decodificando guiones: \(error)")
             throw ScriptError.generationFailed
         }
-    }
-    
-    private func extractJSONFromResponse(_ response: String) -> String {
-        let trimmedResponse = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // First, try to find JSON array boundaries
-        if let startIndex = trimmedResponse.firstIndex(of: "["),
-           let endIndex = trimmedResponse.lastIndex(of: "]") {
-            
-            let jsonSubstring = String(trimmedResponse[startIndex...endIndex])
-            
-            // Validate that we have proper JSON structure
-            if isValidJSONStructure(jsonSubstring) {
-                print("[UGC] Successfully extracted JSON array")
-                return jsonSubstring
-            } else {
-                print("[UGC] Extracted substring is not valid JSON structure")
-            }
+        guard !decoded.isEmpty else { throw ScriptError.generationFailed }
+
+        let now = Date()
+        return decoded.map { item in
+            UGCScript(
+                id: UUID(),
+                title: Self.cleanTitle(item.title),
+                createdAt: now,
+                businessType: request.businessType,
+                productService: request.productService,
+                targetAudience: request.targetAudience,
+                duration: request.duration,
+                hook: item.hook,
+                body: item.body,
+                cta: item.cta,
+                subtitles: item.subtitles.map {
+                    SubtitleSegment(text: $0.text, startTime: $0.startTime, endTime: $0.endTime,
+                                    position: SubtitlePosition(rawValue: $0.position ?? "") ?? .bottom)
+                },
+                shotList: item.shotList.map {
+                    ShotInstruction(sequence: $0.sequence, description: $0.description, duration: $0.duration ?? "",
+                                    cameraAngle: CameraAngle(rawValue: $0.cameraAngle ?? "") ?? .mediumShot,
+                                    notes: $0.notes ?? "")
+                },
+                hookScore: min(max(item.hookScore ?? 0, 0), 100),
+                niche: request.niche
+            )
         }
-        
-        // Fallback: try line-by-line extraction
-        let lines = response.components(separatedBy: .newlines)
-        var jsonLines: [String] = []
-        var inJsonBlock = false
-        var arrayDepth = 0
-        var objectDepth = 0
-        
-        for line in lines {
-            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            if trimmedLine.hasPrefix("[") {
-                inJsonBlock = true
-                arrayDepth = 1
-                objectDepth = 0
-                jsonLines.append(trimmedLine)
-            } else if inJsonBlock {
-                jsonLines.append(trimmedLine)
-                
-                // Count brackets more carefully
-                for char in trimmedLine {
-                    switch char {
-                    case "[":
-                        arrayDepth += 1
-                    case "]":
-                        arrayDepth -= 1
-                    case "{":
-                        objectDepth += 1
-                    case "}":
-                        objectDepth -= 1
-                    default:
-                        break
-                    }
-                }
-                
-                // If we've closed the main array, we're done
-                if arrayDepth == 0 {
-                    break
-                }
-            }
-        }
-        
-        let result = jsonLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        if result.isEmpty || !result.hasPrefix("[") {
-            print("[UGC] Fallback: returning original response")
-            return trimmedResponse
-        }
-        
-        return result
-    }
-    
-    private func isValidJSONStructure(_ jsonString: String) -> Bool {
-        guard jsonString.hasPrefix("[") && jsonString.hasSuffix("]") else {
-            return false
-        }
-        
-        var arrayDepth = 0
-        var objectDepth = 0
-        var inString = false
-        var escapeNext = false
-        
-        for char in jsonString {
-            if escapeNext {
-                escapeNext = false
-                continue
-            }
-            
-            switch char {
-            case "\\":
-                if inString {
-                    escapeNext = true
-                }
-            case "\"":
-                inString.toggle()
-            case "[" where !inString:
-                arrayDepth += 1
-            case "]" where !inString:
-                arrayDepth -= 1
-            case "{" where !inString:
-                objectDepth += 1
-            case "}" where !inString:
-                objectDepth -= 1
-            default:
-                break
-            }
-        }
-        
-        return arrayDepth == 0 && objectDepth == 0 && !inString
     }
 }
 
-private struct ScriptResponse: Codable {
+extension ClaudeUGCScriptService {
+    /// Quita prefijos como "Guión 1:" o "Guion 2 -" que a veces añade la IA.
+    static func cleanTitle(_ title: String) -> String {
+        let cleaned = title.replacingOccurrences(of: #"^\s*gui[oó]n\s*\d+\s*[:.\-–—]\s*"#, with: "",
+                                                 options: [.regularExpression, .caseInsensitive])
+        return cleaned.isEmpty ? title : cleaned
+    }
+}
+
+// MARK: - Respuesta de Claude
+
+/// Solo título, hook, cuerpo y CTA son obligatorios; el resto tiene valores por defecto
+/// para que un campo mal formado no tire todo el guion.
+private struct ScriptResponse: Decodable {
     let title: String
     let hook: String
     let body: [String]
     let cta: String
     let subtitles: [SubtitleResponse]
     let shotList: [ShotResponse]
-    let hookScore: Int
+    let hookScore: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case title, hook, body, cta, subtitles, shotList, hookScore
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        hook = try c.decode(String.self, forKey: .hook)
+        body = try c.decode([String].self, forKey: .body)
+        cta = try c.decode(String.self, forKey: .cta)
+        subtitles = (try? c.decode([SubtitleResponse].self, forKey: .subtitles)) ?? []
+        shotList = (try? c.decode([ShotResponse].self, forKey: .shotList)) ?? []
+        hookScore = try? c.decode(Int.self, forKey: .hookScore)
+    }
 }
 
-private struct SubtitleResponse: Codable {
+private struct SubtitleResponse: Decodable {
     let text: String
     let startTime: Double
     let endTime: Double
-    let position: String
+    let position: String?
 }
 
-private struct ShotResponse: Codable {
+private struct ShotResponse: Decodable {
     let sequence: Int
     let description: String
-    let duration: String
-    let cameraAngle: String
-    let notes: String
+    let duration: String?
+    let cameraAngle: String?
+    let notes: String?
 }

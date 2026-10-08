@@ -18,11 +18,26 @@ struct ContentView: View {
     @State private var activeReport: AnalysisReport?
     @State private var showTutorial = !UserDefaults.standard.bool(forKey: "hasSeenTutorial")
     @State private var showPaywall = false
+    @State private var showAnalysisScreen = false
+    @State private var pendingAIAction: (() -> Void)?
+    @State private var analysisFinished = false
     @State private var hasPresentedPaywall = false
 #if os(iOS)
     @State private var showLegacyVideoPicker = false
 #endif
     private let subscriptionGateEnabled = AppMonetization.paymentsEnabled
+
+    /// El error se muestra cuando ya no está la pantalla de carga encima.
+    private var errorAlertBinding: Binding<Bool> {
+        Binding(get: { viewModel.showError && !showAnalysisScreen },
+                set: { viewModel.showError = $0 })
+    }
+
+    private func presentAnalysisResult() {
+        guard analysisFinished else { return }
+        analysisFinished = false
+        activeReport = viewModel.report
+    }
 
     private var textPrimary: Color { Theme.primary(scheme) }
     private var textSecondary: Color { Theme.secondary(scheme) }
@@ -78,9 +93,30 @@ struct ContentView: View {
                     .padding()
                 }
 
-                if viewModel.isAnalyzing {
-                    LoadingOverlay()
+            }
+        }
+        .fullScreenCover(isPresented: $showAnalysisScreen, onDismiss: presentAnalysisResult) {
+            AnalysisLoadingScreen(
+                videoURL: viewModel.selectedVideoURL,
+                stage: viewModel.analysisStage,
+                finished: analysisFinished,
+                onCancel: { viewModel.cancelAnalysis() }
+            )
+        }
+        .onChange(of: viewModel.isAnalyzing) { _, analyzing in
+            if analyzing {
+                analysisFinished = false
+                viewModel.player?.pause()
+                showAnalysisScreen = true
+            } else if viewModel.report != nil {
+                // Un instante de "Análisis listo" antes de abrir el resultado
+                analysisFinished = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(900))
+                    showAnalysisScreen = false
                 }
+            } else {
+                showAnalysisScreen = false
             }
         }
         .sheet(item: $activeReport) { report in
@@ -89,12 +125,15 @@ struct ContentView: View {
         .sheet(isPresented: $showPaywall) {
             SubscriptionPaywallView()
         }
-        .alert("Error", isPresented: $viewModel.showError, actions: {
+        .aiConsentSheet(pendingAction: $pendingAIAction)
+        .alert("Error", isPresented: errorAlertBinding, actions: {
             Button("Entendido", role: .cancel) {}
         }, message: {
             Text(viewModel.errorMessage ?? "Error inesperado")
         })
         .onChange(of: viewModel.report) { _, report in
+            // Tras un análisis, el resultado se abre al cerrar la pantalla de carga
+            guard !showAnalysisScreen else { return }
             activeReport = report
         }
         .onChange(of: subscriptionManager.isSubscribed) { _, isActive in
@@ -103,24 +142,16 @@ struct ContentView: View {
         }
         .onAppear { 
             Task { 
+                if subscriptionManager.products.isEmpty { await subscriptionManager.refreshProducts() }
                 await subscriptionManager.updateSubscriptionStatus()
                 presentPaywallIfNeeded() 
             }
         }
         .onChange(of: showTutorial) { _, _ in 
             Task { 
+                if subscriptionManager.products.isEmpty { await subscriptionManager.refreshProducts() }
                 await subscriptionManager.updateSubscriptionStatus()
                 presentPaywallIfNeeded() 
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    viewModel.showHistory = true
-                } label: {
-                    Label("Historial", systemImage: "clock.arrow.circlepath")
-                }
-                .foregroundStyle(textPrimary)
             }
         }
         .sheet(isPresented: $viewModel.showHistory) {
@@ -166,15 +197,19 @@ struct ContentView: View {
                     .foregroundStyle(textSecondary)
             }
             Spacer()
-            Button {
-                viewModel.showHistory = true
-            } label: {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.title3)
-                    .padding(10)
-                    .background(panel, in: Circle())
+            HStack(spacing: 10) {
+                ProStatusButton { showPaywall = true }
+                Button {
+                    viewModel.showHistory = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.title3)
+                        .padding(10)
+                        .background(panel, in: Circle())
+                }
+                .foregroundStyle(textPrimary)
+                .accessibilityLabel("Historial")
             }
-            .foregroundStyle(textPrimary)
         }
     }
 
@@ -182,10 +217,10 @@ struct ContentView: View {
         GlassCard {
             HStack(alignment: .center, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Suscripción Go Viral Pro")
+                    Text("Go Viral Pro")
                         .font(.headline)
                         .foregroundStyle(textPrimary)
-                    Text("Análisis ilimitados por 5€/mes. Usuarios gratuitos: 3 análisis mensuales.")
+                    Text("Te quedan \(creditsManager.remainingAnalyses) de \(AnalysisCreditsManager.freeMonthlyLimit) análisis gratis este mes. Con Pro, análisis y guiones sin límite.")
                         .font(.caption)
                         .foregroundStyle(textSecondary)
                 }
@@ -196,8 +231,8 @@ struct ContentView: View {
                     showPaywall = true
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "applelogo")
-                        Text("Suscribirse")
+                        Image(systemName: "crown.fill")
+                        Text("Ver Pro")
                             .fontWeight(.bold)
                     }
                     .font(.subheadline)
@@ -337,9 +372,11 @@ struct ContentView: View {
 
             guard viewModel.selectedVideoURL != nil else { return }
 
-            Task {
-                await viewModel.analyze()
-                if let report = viewModel.report { activeReport = report }
+            runWithAIConsent($pendingAIAction) {
+                Task {
+                    await viewModel.analyze()
+                    if !showAnalysisScreen, let report = viewModel.report { activeReport = report }
+                }
             }
         } label: {
             HStack {
@@ -383,35 +420,8 @@ struct ContentView: View {
                         .overlay(Capsule().stroke(Theme.accent.opacity(0.4)))
                 }
 
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Visualizaciones estimadas")
-                            .font(.caption)
-                            .foregroundStyle(textSecondary)
-                        Text("~" + report.predictedViews.formatted())
-                            .font(.title3.bold())
-                            .foregroundStyle(Theme.accent)
-                    }
-
-                    Divider().frame(height: 42)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Puntuación media")
-                            .font(.caption)
-                            .foregroundStyle(textSecondary)
-                        Text("\(Int(report.metrics.averageScore))/100")
-                            .font(.title3.bold())
-                            .foregroundStyle(self.getScoreColor(Int(report.metrics.averageScore)))
-                    }
-                }
-
-                MetricInsightsView(metrics: report.metrics)
-
-                BenchmarkContextView()
-                if let caseStudy = TrainingDataset.examples.first {
-                    ExampleCaseStudyView(example: caseStudy)
-                }
-              
+                PotentialCard(report: report)
+                DimensionScoresView(report: report)
 
                 if let details = report.analysisDetails {
                     VStack(alignment: .leading, spacing: 10) {
@@ -475,64 +485,6 @@ struct ContentView: View {
         }
     }
 
-    private struct BenchmarkContextView: View {
-        @Environment(\.colorScheme) private var scheme
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Comparativa real", systemImage: "chart.bar.doc.horizontal")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.primary(scheme))
-                Text("Estas métricas se contrastan con \(TrainingDataset.examples.count.formatted()) reels auditados en nichos fitness, cocina, belleza y más. Actualizamos el benchmark cada semana con nuevos casos reales.")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary(scheme))
-            }
-            .padding(12)
-            .background(Theme.panel(scheme).opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.subtleStroke(scheme).opacity(0.8)))
-        }
-    }
-
-    private struct ExampleCaseStudyView: View {
-        let example: TrainingExample
-        @Environment(\.colorScheme) private var scheme
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label("Caso real \(example.contentType.capitalized)", systemImage: "quote.bubble.fill")
-                        .foregroundStyle(Theme.primary(scheme))
-                        .font(.headline)
-                    Spacer()
-                    Text("~\(example.response.predictedViews.formatted()) views")
-                        .font(.subheadline.bold())
-                        .foregroundStyle(Theme.accent)
-                }
-
-                Text(example.visualDescription)
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary(scheme))
-
-                if let highlight = example.response.highlights.first {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(Theme.accent)
-                        Text(highlight)
-                            .font(.footnote)
-                            .foregroundStyle(Theme.primary(scheme))
-                    }
-                }
-
-                Text("Fuente: dataset interno con clips analizados manualmente. Usamos estos patrones como referencia para tus diagnósticos.")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.secondary(scheme))
-            }
-            .padding(14)
-            .background(Theme.panel(scheme).opacity(0.25), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.subtleStroke(scheme)))
-        }
-    }
-
     private func getButtonText() -> String {
         if viewModel.isAnalyzing {
             return "La IA está trabajando..."
@@ -555,6 +507,8 @@ struct ContentView: View {
     private func presentPaywallIfNeeded() {
         guard subscriptionGateEnabled else { return }
         guard !subscriptionManager.isSubscribed, !hasPresentedPaywall else { return }
+        // Si la App Store no devuelve los planes, no abrimos un paywall vacío al arrancar.
+        guard !subscriptionManager.products.isEmpty else { return }
         if !showTutorial {
             showPaywall = true
             hasPresentedPaywall = true
@@ -565,13 +519,6 @@ struct ContentView: View {
 #if os(iOS)
         showLegacyVideoPicker = true
 #endif
-    }
-
-    private func getScoreColor(_ score: Int) -> Color {
-        if score >= 80 { return .green }
-        else if score >= 60 { return .blue }
-        else if score >= 40 { return .orange }
-        else { return .red }
     }
 }
 
@@ -596,8 +543,6 @@ struct ReportSheet: View {
                             ReportView(report: report)
                         case .tips:
                             tipsSection
-                        case .improvements:
-                            improvementsSection
                         }
                     }
                     .padding()
@@ -620,7 +565,6 @@ struct ReportSheet: View {
         return HStack(spacing: 10) {
             tabButton(.results, icon: "sparkles", title: "Resultados")
             tabButton(.tips, icon: "lightbulb.max.fill", title: "Consejos")
-            tabButton(.improvements, icon: "chart.bar.fill", title: "Estadísticas")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -747,61 +691,11 @@ struct ReportSheet: View {
             "Hashtags: 1 amplio (#viral), 2 de nicho y 1 geolocalizado; evita más de 5"
         ]
     }
-
-    private var improvementsSection: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 20) {
-                Label("Estadísticas de Rendimiento", systemImage: "chart.bar.fill")
-                    .font(.headline)
-                    .foregroundStyle(textPrimary)
-                
-                AnimatedStatTableView(metrics: report.metrics)
-                SparklineTableView(metrics: report.metrics)
-
-                // Resumen de Predicción
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Predicción de Rendimiento", systemImage: "chart.line.uptrend.xyaxis")
-                        .font(.subheadline.bold())
-
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Visualizaciones Estimadas")
-                                .font(.caption)
-                                .foregroundStyle(textSecondary)
-                            Text("~\(report.predictedViews.formatted())")
-                                .font(.title2.bold())
-                                .foregroundStyle(.blue)
-                        }
-
-                        Spacer()
-
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text("Puntuación General")
-                                .font(.caption)
-                                .foregroundStyle(textSecondary)
-                            Text("\(Int(report.metrics.averageScore))/100")
-                                .font(.title2.bold())
-                                .foregroundStyle(self.getScoreColor(Int(report.metrics.averageScore)))
-                        }
-                    }
-                }
-                .padding(.top, 8)
-            }
-        }
-    }
-
-    private func getScoreColor(_ score: Int) -> Color {
-        if score >= 80 { return .green }
-        else if score >= 60 { return .blue }
-        else if score >= 40 { return .orange }
-        else { return .red }
-    }
 }
 
 enum ReportTab: String, CaseIterable {
     case results = "Resultados"
     case tips = "Consejos Pro"
-    case improvements = "Estadísticas"
 }
 
 // MARK: - Components
@@ -822,22 +716,17 @@ struct ReportView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(report.title)
                             .font(.headline)
+                            .lineLimit(2)
                         Text(report.formattedDate)
                             .font(.caption)
                             .foregroundStyle(textSecondary)
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Visualizaciones estimadas")
-                            .font(.caption2)
-                            .foregroundStyle(textSecondary)
-                        Text("~" + report.predictedViews.formatted())
-                            .font(.title3.bold())
-                    }
+                    Spacer(minLength: 0)
                 }
                 .foregroundStyle(textPrimary)
 
-                MetricsGrid(metrics: report.metrics)
+                PotentialCard(report: report)
+                DimensionScoresView(report: report)
 
                 VStack(alignment: .leading, spacing: 12) {
                     Label("Resumen rápido", systemImage: "sparkles.tv.fill")
@@ -866,634 +755,6 @@ struct ReportView: View {
                     .padding(10)
                     .background(Theme.panel(scheme).opacity(0.2), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-            }
-        }
-    }
-}
-
-struct MetricsGrid: View {
-    let metrics: EngagementMetrics
-    @Environment(\.colorScheme) private var scheme
-
-    private var textPrimary: Color { Theme.primary(scheme) }
-    private var textSecondary: Color { Theme.secondary(scheme) }
-    private var panel: Color { Theme.panel(scheme) }
-    private var stroke: Color { Theme.subtleStroke(scheme) }
-
-    var body: some View {
-        let items: [(title: String, value: Double, icon: String)] = [
-            ("Retención", metrics.retentionScore, "sparkles.tv"),
-            ("Hook", metrics.hookStrength, "flame"),
-            ("Claridad", metrics.messageClarity, "bubble.left.and.bubble.right"),
-            ("Ritmo", metrics.pacing, "metronome"),
-            ("Viralidad", metrics.viralityProbability, "chart.line.uptrend.xyaxis")
-        ]
-
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
-            ForEach(items.indices, id: \.self) { index in
-                let metric = items[index]
-                VStack(alignment: .leading, spacing: 10) {
-                    Label(metric.title, systemImage: metric.icon)
-                        .foregroundStyle(textPrimary)
-                        .font(.caption.bold())
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(Int(metric.value).formatted())
-                            .font(.title3.bold())
-                        Text("/100")
-                            .font(.caption)
-                            .foregroundStyle(textSecondary)
-                    }
-                    MetricBar(value: metric.value)
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(panel, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(stroke))
-            }
-        }
-    }
-}
-
-struct MetricBar: View {
-    let value: Double
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        GeometryReader { proxy in
-            let clamped = min(max(value / 100, 0), 1)
-            let width = proxy.size.width * clamped
-            ZStack(alignment: .leading) {
-                Capsule().fill(Theme.subtleStroke(scheme).opacity(0.6))
-                Capsule()
-                    .fill(Theme.accent)
-                    .frame(width: width)
-            }
-        }
-        .frame(height: 8)
-    }
-}
-
-struct AnimatedStatTableView: View {
-    let metrics: EngagementMetrics
-    @Environment(\.colorScheme) private var scheme
-    @State private var pulse = false
-
-    private var rows: [(label: String, icon: String, value: Double, average: Double)] {
-        [
-            ("Retención", "sparkles.tv", metrics.retentionScore, 45),
-            ("Hook", "bolt.heart", metrics.hookStrength, 60),
-            ("Claridad", "textformat", metrics.messageClarity, 55),
-            ("Ritmo", "metronome", metrics.pacing, 50),
-            ("Viralidad", "chart.line.uptrend.xyaxis", metrics.viralityProbability, 35)
-        ]
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Barras dinámicas", systemImage: "chart.bar.fill")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.primary(scheme))
-                Spacer()
-                Text("Oscilación en tiempo real")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary(scheme))
-            }
-
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    AnimatedBarRow(row: row, pulse: pulse)
-                    if index != rows.count - 1 {
-                        Divider().padding(.horizontal, 10)
-                    }
-                }
-            }
-            .background(Theme.panel(scheme).opacity(0.12))
-            .cornerRadius(12)
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.subtleStroke(scheme)))
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-                pulse.toggle()
-            }
-        }
-    }
-}
-
-struct AnimatedBarRow: View {
-    let row: (label: String, icon: String, value: Double, average: Double)
-    let pulse: Bool
-    @Environment(\.colorScheme) private var scheme
-
-    private var animatedValue: Double {
-        let wobble: Double = pulse ? 4 : -4
-        return min(max(row.value + wobble, 0), 100)
-    }
-
-    private var comparisonColor: Color {
-        row.value >= row.average ? .green : .orange
-    }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: row.icon)
-                Text(row.label)
-                    .font(.caption.bold())
-            }
-            .foregroundStyle(Theme.primary(scheme))
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                HStack(spacing: 4) {
-                    Text("\(Int(row.value))%")
-                        .font(.caption.bold())
-                    Text("frente a \(Int(row.average))%")
-                        .font(.caption2)
-                        .foregroundStyle(Theme.secondary(scheme))
-                }
-
-                GeometryReader { proxy in
-                    let width = proxy.size.width
-                    let maxWidth = width
-                    let normalized = max(min(animatedValue / 100, 1), 0)
-                    let barWidth = maxWidth * normalized
-
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.subtleStroke(scheme).opacity(0.5))
-                        Capsule()
-                            .fill(LinearGradient(colors: [Theme.accentStart.opacity(0.8), comparisonColor.opacity(0.6)], startPoint: .leading, endPoint: .trailing))
-                            .frame(width: barWidth)
-                            .shadow(color: comparisonColor.opacity(0.25), radius: 6, y: 3)
-
-                        let avgX = width * max(min(row.average / 100, 1), 0)
-                        Rectangle()
-                            .fill(comparisonColor)
-                            .frame(width: 2)
-                            .offset(x: avgX - 1)
-                            .opacity(0.7)
-                    }
-                }
-                .frame(height: 12)
-            }
-            .frame(width: 180)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
-    }
-}
-
-struct SparklineTableView: View {
-    let metrics: EngagementMetrics
-    @Environment(\.colorScheme) private var scheme
-    @State private var phase = false
-
-    private var rows: [(label: String, icon: String, points: [Double])] {
-        [
-            ("Engagement", "waveform.path", sparkline(for: metrics.retentionScore)),
-            ("Hook", "bolt", sparkline(for: metrics.hookStrength)),
-            ("Claridad", "text.justify", sparkline(for: metrics.messageClarity)),
-            ("Ritmo", "metronome", sparkline(for: metrics.pacing)),
-            ("Viralidad", "flame", sparkline(for: metrics.viralityProbability))
-        ]
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Sparklines dinámicos", systemImage: "waveform.path.ecg")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.primary(scheme))
-                Spacer()
-                Text("Mini tendencias animadas")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary(scheme))
-            }
-
-            VStack(spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    SparklineRow(row: row, phase: phase)
-                    if index != rows.count - 1 {
-                        Divider().padding(.horizontal, 10)
-                    }
-                }
-            }
-            .background(Theme.panel(scheme).opacity(0.12))
-            .cornerRadius(12)
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.subtleStroke(scheme)))
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
-                phase.toggle()
-            }
-        }
-    }
-
-    private func sparkline(for value: Double) -> [Double] {
-        let base = max(min(value, 100), 0)
-        return [0.6, 0.75, 0.5, 0.8, 0.65, 0.9, 0.7].map { $0 * (base / 100) }
-    }
-}
-
-struct SparklineRow: View {
-    let row: (label: String, icon: String, points: [Double])
-    let phase: Bool
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: row.icon)
-                Text(row.label)
-                    .font(.caption.bold())
-            }
-            .foregroundStyle(Theme.primary(scheme))
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Sparkline(points: row.points, phase: phase)
-                .frame(width: 180, height: 40)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
-    }
-}
-
-struct Sparkline: View {
-    let points: [Double]
-    let phase: Bool
-    @Environment(\.colorScheme) private var scheme
-
-    private var animatedPoints: [Double] {
-        points.enumerated().map { idx, val in
-            let offset = phase ? 0.06 : -0.06
-            return max(min(val + offset * (idx.isMultiple(of: 2) ? 1 : -1), 1), 0)
-        }
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let height = proxy.size.height
-            let data = animatedPoints
-            let step = data.count > 1 ? width / CGFloat(data.count - 1) : 0
-
-            Path { path in
-                for (index, value) in data.enumerated() {
-                    let x = CGFloat(index) * step
-                    let y = height - (CGFloat(value) * height)
-                    if index == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
-                    }
-                }
-            }
-            .stroke(LinearGradient(colors: [Theme.accentStart, Theme.accentEnd.opacity(0.5)], startPoint: .leading, endPoint: .trailing), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            .shadow(color: Theme.accentStart.opacity(0.25), radius: 4, y: 2)
-
-            if let last = data.last {
-                let x = width
-                let y = height - (CGFloat(last) * height)
-                Circle()
-                    .fill(Theme.accent)
-                    .frame(width: 8, height: 8)
-                    .position(x: x, y: y)
-            }
-        }
-    }
-}
-
-struct MetricInsightsView: View {
-    let metrics: EngagementMetrics
-    @Environment(\.colorScheme) private var scheme
-    @State private var selected: MetricKind = .retention
-    @State private var phase = false
-
-    private var detail: MetricDetail {
-        metricDetail(for: selected)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("Deep dive por métrica", systemImage: "slider.horizontal.3")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.primary(scheme))
-                Spacer()
-                Text("Toca una métrica para ver mejoras")
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary(scheme))
-            }
-
-            let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(MetricKind.allCases, id: \.self) { kind in
-                    let item = metricDetail(for: kind)
-                    Button {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            selected = kind
-                        }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 6) {
-                                Image(systemName: kind.icon)
-                                Text(kind.label)
-                                    .font(.caption.bold())
-                            }
-                            .foregroundStyle(Theme.primary(scheme))
-
-                            Text("\(Int(item.value))%")
-                                .font(.headline.bold())
-                                .foregroundStyle(Theme.primary(scheme))
-
-                            Text("Objetivo: \(Int(item.goal))%")
-                                .font(.caption)
-                                .foregroundStyle(Theme.secondary(scheme))
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(selected == kind ? Theme.panel(scheme).opacity(0.5) : Theme.panel(scheme).opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(selected == kind ? Theme.accentStart.opacity(0.6) : Theme.subtleStroke(scheme)))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 2)
-
-            MetricInsightChart(points: chartPoints(for: detail), color: detail.color, phase: phase)
-                .frame(height: 140)
-                .background(Theme.panel(scheme).opacity(0.2), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.subtleStroke(scheme)))
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Actual vs objetivo")
-                        .font(.caption.bold())
-                        .foregroundStyle(Theme.primary(scheme))
-                    Spacer()
-                    Text("\(Int(detail.value))% / \(Int(detail.goal))%")
-                        .font(.caption)
-                        .foregroundStyle(Theme.secondary(scheme))
-                }
-
-                MetricProgressBar(value: detail.value, goal: detail.goal, color: detail.color)
-
-                Text(detail.gapText)
-                    .font(.caption)
-                    .foregroundStyle(Theme.secondary(scheme))
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Parámetros clave para subir la métrica")
-                    .font(.caption.bold())
-                    .foregroundStyle(Theme.primary(scheme))
-
-                ForEach(detail.levers, id: \.self) { lever in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "checkmark.seal")
-                            .font(.caption)
-                            .foregroundStyle(detail.color)
-                        Text(lever)
-                            .font(.footnote)
-                            .foregroundStyle(Theme.primary(scheme))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(10)
-                    .background(Theme.panel(scheme).opacity(0.18), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.subtleStroke(scheme)))
-                }
-            }
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-                phase.toggle()
-            }
-        }
-    }
-
-    private func chartPoints(for detail: MetricDetail) -> [Double] {
-        let normalized = max(min(detail.value / 100, 1), 0)
-        let base: [Double] = [0.5, 0.6, 0.55, 0.65, 0.62, 0.7, 0.75]
-        return base.enumerated().map { idx, val in
-            let wobble = phase ? 0.035 : -0.035
-            return max(min(val * normalized + wobble * (idx.isMultiple(of: 2) ? 1 : -1), 1), 0)
-        }
-    }
-
-    private func metricDetail(for kind: MetricKind) -> MetricDetail {
-        switch kind {
-        case .retention:
-            return MetricDetail(label: "Retención", icon: kind.icon, value: metrics.retentionScore, goal: 65, color: .blue, levers: [
-                "Cortes cada 2-3s en los primeros 8s",
-                "Texto en pantalla de 3-5 palabras con contraste alto",
-                "Muestra resultado/beneficio antes del segundo 4"
-            ])
-        case .hook:
-            return MetricDetail(label: "Hook", icon: kind.icon, value: metrics.hookStrength, goal: 70, color: .orange, levers: [
-                "Empieza con la promesa final en 1 frase",
-                "Incluye gesto o close-up al decir la frase clave",
-                "Usa subtítulos grandes en la primera línea"
-            ])
-        case .clarity:
-            return MetricDetail(label: "Claridad", icon: kind.icon, value: metrics.messageClarity, goal: 72, color: .teal, levers: [
-                "Un mensaje principal por escena, sin desvíos",
-                "Texto alineado a un lado, no sobre la cara",
-                "Contraste alto entre fondo y tipografía"
-            ])
-        case .pacing:
-            return MetricDetail(label: "Ritmo", icon: kind.icon, value: metrics.pacing, goal: 68, color: .purple, levers: [
-                "Alterna planos cada 1.5-2.5s al inicio",
-                "Inserta b-roll rápido para cada afirmación",
-                "Silencios < 0.8s; rellena con texto o efecto"
-            ])
-        case .virality:
-            return MetricDetail(label: "Viralidad", icon: kind.icon, value: metrics.viralityProbability, goal: 60, color: .pink, levers: [
-                "Cierra con un CTA guardable o retador",
-                "Usa contraste de emoción entre inicio y cierre",
-                "Títulos con número o promesa concreta (\"Antes/Después\", \"En 3 pasos\")"
-            ])
-        }
-    }
-}
-
-private enum MetricKind: CaseIterable {
-    case retention, hook, clarity, pacing, virality
-
-    var label: String {
-        switch self {
-        case .retention: return "Retención"
-        case .hook: return "Hook"
-        case .clarity: return "Claridad"
-        case .pacing: return "Ritmo"
-        case .virality: return "Viralidad"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .retention: return "sparkles.tv"
-        case .hook: return "bolt.heart"
-        case .clarity: return "text.alignleft"
-        case .pacing: return "speedometer"
-        case .virality: return "chart.line.uptrend.xyaxis"
-        }
-    }
-}
-
-private struct MetricDetail {
-    let label: String
-    let icon: String
-    let value: Double
-    let goal: Double
-    let color: Color
-    let levers: [String]
-
-    var gapText: String {
-        let gap = max(goal - value, 0)
-        if gap <= 0 { return "Ya alcanzaste el objetivo de \(label.lowercased())." }
-        return "Faltan ~\(Int(gap)) puntos para el objetivo de \(Int(goal))%."
-    }
-}
-
-private struct MetricInsightChart: View {
-    let points: [Double]
-    let color: Color
-    let phase: Bool
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let height = proxy.size.height
-            let step = points.count > 1 ? width / CGFloat(points.count - 1) : 0
-
-            let clamped = points.map { max(min($0, 1), 0) }
-
-            Path { path in
-                guard let first = clamped.first else { return }
-                path.move(to: CGPoint(x: 0, y: height - CGFloat(first) * height))
-                for (index, value) in clamped.enumerated() where index > 0 {
-                    let x = CGFloat(index) * step
-                    let y = height - CGFloat(value) * height
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-            }
-            .stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-            .shadow(color: color.opacity(0.25), radius: 6, y: 3)
-
-            Path { path in
-                guard let first = clamped.first else { return }
-                path.move(to: CGPoint(x: 0, y: height))
-                path.addLine(to: CGPoint(x: 0, y: height - CGFloat(first) * height))
-                for (index, value) in clamped.enumerated() where index > 0 {
-                    let x = CGFloat(index) * step
-                    let y = height - CGFloat(value) * height
-                    path.addLine(to: CGPoint(x: x, y: y))
-                }
-                path.addLine(to: CGPoint(x: width, y: height))
-                path.closeSubpath()
-            }
-            .fill(LinearGradient(colors: [color.opacity(0.25), color.opacity(0.05)], startPoint: .top, endPoint: .bottom))
-
-            if let last = clamped.last {
-                let x = width
-                let y = height - CGFloat(last) * height
-                Circle()
-                    .fill(color)
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
-                    .position(x: x, y: y)
-            }
-        }
-    }
-}
-
-private struct MetricProgressBar: View {
-    let value: Double
-    let goal: Double
-    let color: Color
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let normalizedValue = max(min(value / 100, 1), 0)
-            let normalizedGoal = max(min(goal / 100, 1), 0)
-            let valueWidth = width * normalizedValue
-            let goalX = width * normalizedGoal
-
-            ZStack(alignment: .leading) {
-                Capsule().fill(Theme.subtleStroke(scheme).opacity(0.6))
-                Capsule()
-                    .fill(color)
-                    .frame(width: valueWidth)
-
-                Rectangle()
-                    .fill(color.opacity(0.9))
-                    .frame(width: 2)
-                    .offset(x: goalX - 1)
-            }
-        }
-        .frame(height: 10)
-    }
-}
-
-struct LoadingOverlay: View {
-    @Environment(\.colorScheme) private var scheme
-    @State private var currentMessage = 0
-    @State private var timer: Timer?
-    
-    private let messages: [(icon: String, text: String)] = [
-        ("brain.head.profile", "La IA está analizando tu contenido..."),
-        ("sparkles", "Detectando potencial viral..."),
-        ("target", "Calculando métricas de engagement..."),
-        ("rocket.fill", "Prediciendo cantidad de visualizaciones..."),
-        ("chart.bar.xaxis", "Generando insights..."),
-        ("film.fill", "Casi listo, finalizando resultados...")
-    ]
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.45).ignoresSafeArea()
-            VStack(spacing: 20) {
-                ZStack {
-                    Circle()
-                        .fill(Theme.accent.opacity(0.2))
-                        .frame(width: 80, height: 80)
-                    
-                    ProgressView()
-                        .compatibleTint(Theme.accentStart)
-                        .scaleEffect(1.5)
-                }
-                
-                VStack(spacing: 8) {
-                    Label(messages[currentMessage].text, systemImage: messages[currentMessage].icon)
-                        .font(.headline)
-                        .foregroundStyle(Theme.primary(scheme))
-                        .multilineTextAlignment(.center)
-                        .animation(.easeInOut(duration: 0.5), value: currentMessage)
-                        .labelStyle(.titleAndIcon)
-                        .compatibleTint(Theme.accentStart)
-                    
-                    Text("Esto puede tomar unos segundos")
-                        .font(.caption)
-                        .foregroundStyle(Theme.secondary(scheme))
-                }
-            }
-            .padding(32)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        }
-        .onAppear {
-            startMessageRotation()
-        }
-        .onDisappear {
-            timer?.invalidate()
-        }
-    }
-    
-    private func startMessageRotation() {
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-            withAnimation(.easeInOut(duration: 0.5)) {
-                currentMessage = (currentMessage + 1) % messages.count
             }
         }
     }
@@ -1546,7 +807,7 @@ struct OnboardingView: View {
         [
             OnboardingStep(title: "Sube un video vertical", description: "Selecciona tu video MP4/MOV y previéwalo en formato 9:16 instantáneamente.", icon: "video.fill"),
             OnboardingStep(title: "Reproducción + botón IA", description: "Revisa la vista previa y toca \"Iniciar análisis\" para enviarlo a la IA.", icon: "sparkles"),
-            OnboardingStep(title: "Resultados y consejos", description: "Ve puntuaciones, visualizaciones predichas y sugerencias. El historial se guarda.", icon: "chart.line.uptrend.xyaxis")
+            OnboardingStep(title: "Resultados y consejos", description: "Ve qué funciona, qué mejorar y por qué, frame a frame. El historial se guarda.", icon: "chart.line.uptrend.xyaxis")
         ]
     }
 
@@ -1658,9 +919,9 @@ struct HistoryView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             HStack {
-                                Label("Puntuación \(Int(report.metrics.averageScore))", systemImage: "star.fill")
+                                Label(report.potential.title, systemImage: "sparkles")
                                 Spacer()
-                                Label("~\(report.predictedViews.formatted()) vistas", systemImage: "eye")
+                                Text("\(report.overallScore, format: .number.precision(.fractionLength(1)))/10")
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)

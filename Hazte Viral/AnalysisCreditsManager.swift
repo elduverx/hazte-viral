@@ -18,7 +18,8 @@ final class AnalysisCreditsManager: ObservableObject {
     @Published var lastResetDate: Date = Date()
 
     // MARK: - Constants
-    private let freeMonthlyLimit = 3
+    static let freeMonthlyLimit = 3
+    private var freeMonthlyLimit: Int { Self.freeMonthlyLimit }
     private let userDefaults = UserDefaults.standard
 
     // MARK: - UserDefaults Keys

@@ -1,0 +1,130 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [
+      {
+        "locale" : "es_ES",
+        "policyText" : "",
+        "policyURL" : ""
+      }
+    ]
+  },
+  "identifier" : "5A1B2C3D",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingGracePeriodEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "es_ES",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "ESP",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21000001",
+      "localizations" : [
+        {
+          "description" : "",
+          "displayName" : "Go Viral Pro",
+          "locale" : "es_ES"
+        }
+      ],
+      "name" : "Go Viral Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "billingPlans" : [
+            {
+              "billingPlanType" : "BILLED_UPFRONT",
+              "commitmentDisplayPrice" : "59.99",
+              "displayPrice" : "59.99",
+              "internalID" : "6900000002_BILLED_UPFRONT",
+              "isEnabled" : true
+            }
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "59.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6900000002",
+          "introductoryOffers" : [
+
+          ],
+          "localizations" : [
+            {
+              "description" : "Go Viral Pro anual",
+              "displayName" : "Anual",
+              "locale" : "es_ES"
+            }
+          ],
+          "productID" : "goviralpro_anual",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Anual",
+          "subscriptionGroupID" : "21000001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "billingPlans" : [
+            {
+              "billingPlanType" : "BILLED_UPFRONT",
+              "commitmentDisplayPrice" : "7.99",
+              "displayPrice" : "7.99",
+              "internalID" : "6900000001_BILLED_UPFRONT",
+              "isEnabled" : true
+            }
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "7.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6900000001",
+          "introductoryOffers" : [
+
+          ],
+          "localizations" : [
+            {
+              "description" : "Go Viral Pro mensual",
+              "displayName" : "Mensual",
+              "locale" : "es_ES"
+            }
+          ],
+          "productID" : "goviral1",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Mensual",
+          "subscriptionGroupID" : "21000001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 5,
+    "minor" : 0
+  }
+}

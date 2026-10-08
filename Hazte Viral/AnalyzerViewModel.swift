@@ -19,6 +19,8 @@ final class AnalyzerViewModel: ObservableObject {
     @Published var report: AnalysisReport?
     @Published var isAnalyzing = false
     @Published var isLoadingVideo = false
+    @Published private(set) var analysisStage: AnalysisStage = .extractingFrames
+    private var analysisTask: Task<AnalysisReport, Error>?
     @Published var errorMessage: String?
     @Published var showError = false
     @Published var showHistory = false
@@ -132,10 +134,20 @@ final class AnalyzerViewModel: ObservableObject {
         print("[Analysis] Analizando video: \(videoURL.lastPathComponent)")
         print("[Config] Servicio utilizado: \(type(of: service))")
 
+        analysisStage = .extractingFrames
         isAnalyzing = true
         do {
             print("[Network] Llamando al servicio de análisis...")
-            let result = try await service.analyze(videoURL: videoURL, title: displayName, videoHash: hash)
+            let service = self.service
+            let title = displayName
+            let task = Task {
+                try await service.analyze(videoURL: videoURL, title: title, videoHash: hash) { [weak self] stage in
+                    self?.analysisStage = stage
+                }
+            }
+            analysisTask = task
+            defer { analysisTask = nil }
+            let result = try await task.value
             print("[Analysis] Análisis completado exitosamente")
 
             // Consumir crédito DESPUÉS de análisis exitoso
@@ -146,13 +158,21 @@ final class AnalyzerViewModel: ObservableObject {
             historyStore.add(result)
             history = historyStore.reports
 
-            print("[Result] \(result.predictedViews) vistas predichas")
+            print("[Result] Potencial: \(result.potential.title) (\(String(format: "%.1f", result.overallScore))/10)")
+        } catch is CancellationError {
+            print("[Analysis] Análisis cancelado por el usuario")
+        } catch let error as URLError where error.code == .cancelled {
+            print("[Analysis] Análisis cancelado por el usuario")
         } catch {
             print("[Error] Error durante análisis: \(error)")
             present(error: error)
         }
         isAnalyzing = false
         print("[Analysis] Análisis finalizado")
+    }
+
+    func cancelAnalysis() {
+        analysisTask?.cancel()
     }
 
     func present(error: Error) {

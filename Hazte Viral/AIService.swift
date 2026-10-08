@@ -8,8 +8,22 @@
 import Foundation
 import CoreGraphics
 
+/// Etapas reales del análisis, para la pantalla de carga.
+enum AnalysisStage: Int, CaseIterable {
+    case extractingFrames, uploading, analyzing
+
+    var title: String {
+        switch self {
+        case .extractingFrames: return "Extrayendo fotogramas"
+        case .uploading: return "Enviando a la IA"
+        case .analyzing: return "Analizando hook, ritmo y mensaje"
+        }
+    }
+}
+
 protocol AIAnalysisProviding {
-    func analyze(videoURL: URL, title: String?, videoHash: String?) async throws -> AnalysisReport
+    func analyze(videoURL: URL, title: String?, videoHash: String?,
+                 onStage: @escaping @MainActor (AnalysisStage) -> Void) async throws -> AnalysisReport
 }
 
 // MARK: - Backend
@@ -32,7 +46,9 @@ enum BackendClient {
     }
 
     /// Envía `body` al endpoint del backend y devuelve el texto de Claude.
-    static func post(_ endpoint: String, body: [String: Any], session: URLSession = .shared) async throws -> String {
+    /// `onUploaded` se llama cuando el cuerpo de la petición ya se ha enviado y solo queda esperar a la IA.
+    static func post(_ endpoint: String, body: [String: Any], session: URLSession = .shared,
+                     onUploaded: (@MainActor () -> Void)? = nil) async throws -> String {
         guard let appToken else {
             print("[Error] APP_TOKEN no configurado en Build Settings")
             throw AnalysisError.unauthorized
@@ -48,7 +64,8 @@ enum BackendClient {
         request.setValue(appToken, forHTTPHeaderField: "X-App-Token")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: request)
+        let delegate = onUploaded.map(UploadProgressDelegate.init)
+        let (data, response) = try await session.data(for: request, delegate: delegate)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AnalysisError.server(message: "Respuesta del servidor inválida")
@@ -65,6 +82,23 @@ enum BackendClient {
     }
 }
 
+/// Avisa una sola vez cuando se ha terminado de subir el cuerpo de la petición.
+private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let onUploaded: @MainActor () -> Void
+    private var notified = false
+
+    init(onUploaded: @escaping @MainActor () -> Void) {
+        self.onUploaded = onUploaded
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                    totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        guard !notified, totalBytesSent >= totalBytesExpectedToSend else { return }
+        notified = true
+        Task { @MainActor [onUploaded] in onUploaded() }
+    }
+}
+
 // MARK: - Analysis
 
 final class ClaudeAIService: AIAnalysisProviding {
@@ -78,7 +112,8 @@ final class ClaudeAIService: AIAnalysisProviding {
         self.decoder = decoder
     }
 
-    func analyze(videoURL: URL, title: String?, videoHash: String?) async throws -> AnalysisReport {
+    func analyze(videoURL: URL, title: String?, videoHash: String?,
+                 onStage: @escaping @MainActor (AnalysisStage) -> Void) async throws -> AnalysisReport {
         guard FileManager.default.fileExists(atPath: videoURL.path) else {
             print("[Error] Video no encontrado en \(videoURL.path)")
             throw AnalysisError.invalidVideo
@@ -87,6 +122,7 @@ final class ClaudeAIService: AIAnalysisProviding {
         print("[Info] Video encontrado: \(videoURL.lastPathComponent)")
 
         // Extract frames from video for visual analysis
+        await onStage(.extractingFrames)
         print("[Frames] Extrayendo frames del video...")
         let frames = try await VideoFrameExtractor.extractFrames(from: videoURL, frameCount: 8)
         print("[Frames] Extraídos \(frames.count) frames del video")
@@ -94,39 +130,55 @@ final class ClaudeAIService: AIAnalysisProviding {
         let base64Frames = frames.compactMap { VideoFrameExtractor.imageToBase64(image: $0) }
         print("[Frames] \(base64Frames.count)/\(frames.count) frames convertidos a base64")
 
+        try Task.checkCancellation()
+        await onStage(.uploading)
         print("[Network] Enviando frames al backend...")
         let text = try await BackendClient.post("analyze", body: [
             "title": title ?? videoURL.lastPathComponent,
             "frames": base64Frames
-        ], session: session)
+        ], session: session, onUploaded: { onStage(.analyzing) })
 
         print("[Parse] Parseando respuesta de Claude...")
         let payload = try parseAnalysis(from: text)
         print("[Success] Análisis completado exitosamente")
 
-        // Convertir scores del nuevo formato (0-10) a métricas (0-100)
+        // Solo lo que la IA ha medido. Claridad y ritmo vienen del backend nuevo; si faltan, no se inventan.
+        var scores = [
+            ScoreDimension(kind: .hook, score: clamp10(payload.hookScore), reason: payload.scoreReasons?.hook ?? ""),
+            ScoreDimension(kind: .visualQuality, score: clamp10(payload.videoQualityScore),
+                           reason: payload.scoreReasons?.visualQuality ?? "")
+        ]
+        if let clarity = payload.clarityScore {
+            scores.append(ScoreDimension(kind: .clarity, score: clamp10(clarity), reason: payload.scoreReasons?.clarity ?? ""))
+        }
+        if let pacing = payload.pacingScore {
+            scores.append(ScoreDimension(kind: .pacing, score: clamp10(pacing), reason: payload.scoreReasons?.pacing ?? ""))
+        }
+        func value(_ kind: ScoreDimension.Kind) -> Double? {
+            scores.first { $0.kind == kind }.map { Double($0.score * 10) }
+        }
+        let average = scores.map { Double($0.score) }.reduce(0, +) / Double(scores.count) * 10
+
+        // Métricas internas (0-100) para los consejos; ya no se muestran como porcentajes.
         let metrics = EngagementMetrics(
-            retentionScore: Double(payload.videoQualityScore * 10),
-            hookStrength: Double(payload.hookScore * 10),
-            messageClarity: payload.editingPace == "rápido" ? 85.0 : payload.editingPace == "medio" ? 70.0 : 55.0,
-            pacing: payload.editingPace == "rápido" ? 90.0 : payload.editingPace == "medio" ? 70.0 : 50.0,
-            viralityProbability: Double((payload.videoQualityScore + payload.hookScore) * 5)
+            retentionScore: value(.visualQuality) ?? 0,
+            hookStrength: value(.hook) ?? 0,
+            messageClarity: value(.clarity) ?? average,
+            pacing: value(.pacing) ?? average,
+            viralityProbability: average
         )
 
-        // Generar highlights basados en evidencias
         let highlights = [
-            "Análisis del hook: \(payload.emotionDetected != "neutral" ? "Emoción \(payload.emotionDetected) detectada" : "Hook sin emoción clara visible")",
-            "Contenido identificado: \(payload.mainTopic)",
-            "Ritmo de edición: \(payload.editingPace) - \(payload.evidence.framesReferenced.count) frames analizados"
+            "Tema: \(payload.mainTopic)",
+            payload.emotionDetected.lowercased() == "neutral" ? "Sin una emoción clara en el inicio" : "Emoción detectada: \(payload.emotionDetected)",
+            "Ritmo de edición: \(payload.editingPace)"
         ]
-
-        let predicted = predictViews(from: payload)
 
         return AnalysisReport(
             id: UUID(),
             title: payload.mainTopic.isEmpty ? (title ?? "Video") : payload.mainTopic,
             createdAt: Date(),
-            predictedViews: predicted,
+            predictedViews: 0, // Ya no se estiman visualizaciones (no se pueden predecir desde el vídeo)
             metrics: metrics,
             highlights: highlights,
             recommendations: Array(payload.threeSpecificImprovements.prefix(3)),
@@ -138,8 +190,13 @@ final class ClaudeAIService: AIAnalysisProviding {
                 onScreenTextDetected: payload.onScreenText.map { "\($0.text) (Frame \($0.frame))" }.joined(separator: ", "),
                 whyWorksOrNot: payload.whyItWorksOrNot
             ),
-            videoHash: videoHash
+            videoHash: videoHash,
+            scores: scores
         )
+    }
+
+    private func clamp10(_ value: Int) -> Int {
+        min(max(value, 0), 10)
     }
 
     private func parseAnalysis(from text: String) throws -> ClaudeAnalysisPayload {
@@ -180,46 +237,6 @@ final class ClaudeAIService: AIAnalysisProviding {
 
             throw AnalysisError.server(message: "El servicio devolvió un mensaje no estructurado: \(text)")
         }
-    }
-
-    private func clampScore(_ value: Double) -> Double {
-        min(max(value, 0), 100)
-    }
-
-    private func predictViews(from payload: ClaudeAnalysisPayload) -> Int {
-        // Estimación con techo dinámico para no capar videos virales
-        let raw = (Double(payload.videoQualityScore) * 0.55) + (Double(payload.hookScore) * 0.45)
-        let paceAdjustment: Double
-        if payload.editingPace.lowercased().contains("ráp") {
-            paceAdjustment = 0.12
-        } else if payload.editingPace.lowercased().contains("lento") {
-            paceAdjustment = -0.08
-        } else {
-            paceAdjustment = 0.0
-        }
-
-        let emotionAdjustment: Double = payload.emotionDetected.lowercased() == "neutral" ? -0.05 : 0.04
-
-        // Score normalizado 0-10 con ajustes
-        let normalized = max(0, min(10, (raw / 10.0) + paceAdjustment + emotionAdjustment))
-
-        // Techo dinámico: si hook/calidad son altos, permitir rangos de millones
-        let viralityCeiling: Double
-        if payload.videoQualityScore >= 9 && payload.hookScore >= 9 {
-            viralityCeiling = 5_000_000
-        } else if payload.videoQualityScore >= 8 && payload.hookScore >= 8 {
-            viralityCeiling = 2_500_000
-        } else if payload.videoQualityScore >= 7 && payload.hookScore >= 7 {
-            viralityCeiling = 900_000
-        } else {
-            viralityCeiling = 220_000
-        }
-
-        let floor: Double = 1_200
-        let logistic = 1.0 / (1.0 + exp(-(normalized - 5.0) / 1.05))
-        let estimated = floor + logistic * (viralityCeiling - floor)
-
-        return Int(estimated.rounded())
     }
 
     private func recoverTruncatedPayload(from text: String) throws -> ClaudeAnalysisPayload {
@@ -282,8 +299,23 @@ private struct ClaudeAnalysisPayload: Decodable {
         }
     }
 
+    struct ScoreReasons: Decodable {
+        let hook: String?
+        let visualQuality: String?
+        let clarity: String?
+        let pacing: String?
+
+        enum CodingKeys: String, CodingKey {
+            case hook, clarity, pacing
+            case visualQuality = "visual_quality"
+        }
+    }
+
     let videoQualityScore: Int
     let hookScore: Int
+    let clarityScore: Int?
+    let pacingScore: Int?
+    let scoreReasons: ScoreReasons?
     let emotionDetected: String
     let mainTopic: String
     let editingPace: String
@@ -297,6 +329,9 @@ private struct ClaudeAnalysisPayload: Decodable {
     enum CodingKeys: String, CodingKey {
         case videoQualityScore = "video_quality_score"
         case hookScore = "hook_score"
+        case clarityScore = "clarity_score"
+        case pacingScore = "pacing_score"
+        case scoreReasons = "score_reasons"
         case emotionDetected = "emotion_detected"
         case mainTopic = "main_topic"
         case editingPace = "editing_pace"

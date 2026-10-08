@@ -1,190 +1,301 @@
 import StoreKit
 import SwiftUI
 
+/// Enlaces legales que exige Apple en una suscripción.
+enum LegalLinks {
+    /// EULA estándar de Apple (es el que aplica si no subes uno propio en App Store Connect).
+    static let terms = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
+    static let privacy = URL(string: "https://viral.elduverx.com/privacy")!
+}
+
 struct SubscriptionPaywallView: View {
     @EnvironmentObject var subscriptionManager: SubscriptionManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+    @State private var selectedID: String?
 
-    private var textPrimary: Color {
-        Theme.primary(scheme)
-    }
-    
-    private var textSecondary: Color {
-        Theme.secondary(scheme)
+    private var selected: Product? {
+        subscriptionManager.products.first { $0.id == selectedID } ?? subscriptionManager.products.first
     }
 
     var body: some View {
-        CompatibleNavigationStack {
+        NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: 24) {
                     header
-                    benefitsCard
-                    purchaseCard
-                    errorMessageView
+                    benefits
+                    plans
+                    purchaseButton
+                    disclosure
+                    footerLinks
                 }
                 .padding()
             }
-            .navigationTitle("Suscripción")
+            .background(Theme.background(scheme).ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cerrar") { dismiss() }
-                        .foregroundStyle(textPrimary)
                 }
             }
+        }
+        .task {
+            if subscriptionManager.products.isEmpty { await subscriptionManager.refreshProducts() }
         }
         .onChange(of: subscriptionManager.isSubscribed) { _, isActive in
             if isActive { dismiss() }
         }
     }
 
-    private var benefitsCard: some View {
-        GlassCard {
-            VStack(alignment: .leading, spacing: 14) {
-                Label("Beneficios de la suscripción", systemImage: "seal.fill")
-                    .font(.headline)
-                    .foregroundStyle(textPrimary)
-
-                ForEach(benefits, id: \.self) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.accent)
-                        Text(item)
-                            .foregroundStyle(textSecondary)
-                    }
-                    .font(.subheadline)
-                }
-
-                Label("Acceso inmediato al plan Pro", systemImage: "bolt.fill")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.accent)
-            }
-        }
-    }
-
-    private var purchaseCard: some View {
-        GlassCard { purchaseCardContent }
-    }
-
-    private var purchaseCardContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            purchaseHeaderSection
-            purchaseButtonSection
-            purchaseFootnote
-            legalLinksSection
-            restorePurchasesButton
-        }
-    }
-
-    private var purchaseHeaderSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Go Viral Pro")
-                    .font(.headline)
-                    .foregroundStyle(textPrimary)
-                Text("Suscripción mensual")
-                    .font(.caption)
-                    .foregroundStyle(textSecondary)
-            }
-            Spacer()
-            Text(subscriptionManager.priceDisplay)
-                .font(.title3.bold())
-                .foregroundStyle(Theme.accent)
-        }
-    }
-
-    @ViewBuilder
-    private var purchaseButtonSection: some View {
-        VStack(spacing: 10) {
-            Button(action: purchase) {
-                HStack {
-                    Image(systemName: "applelogo")
-                    Text(subscriptionManager.isProcessing ? "Procesando..." : "Suscribirse ahora")
-                        .fontWeight(.bold)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(Theme.accent)
-                .foregroundStyle(.white)
-                .cornerRadius(14)
-            }
-            .opacity(subscriptionManager.isProcessing ? 0.7 : 1)
-            .disabled(subscriptionManager.isProcessing)
-
-            if subscriptionManager.isProcessing {
-                ProgressView("Procesando compra...")
-                    .font(.footnote)
-            }
-        }
-    }
-
-    private var purchaseFootnote: some View {
-        Text("Suscripción de \(subscriptionManager.priceDisplay) sin prueba gratuita. El cobro se realiza a través de tu cuenta de App Store. Cancela cuando quieras desde Ajustes.")
-            .font(.footnote)
-            .foregroundStyle(textSecondary)
-    }
-
-    private var legalLinksSection: some View {
-        HStack(spacing: 16) {
-            Link("Términos de Uso", destination: URL(string: "https://hazteviral.app/terms")!)
-                .font(.caption)
-                .foregroundStyle(Theme.accent)
-
-            Text("•")
-                .font(.caption)
-                .foregroundStyle(textSecondary)
-
-            Link("Política de Privacidad", destination: URL(string: "https://hazteviral.app/privacy")!)
-                .font(.caption)
-                .foregroundStyle(Theme.accent)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    private var restorePurchasesButton: some View {
-        Button("Restaurar Compras", action: restorePurchases)
-            .font(.caption)
-            .foregroundStyle(subscriptionManager.isProcessing ? Theme.accentStart.opacity(0.6) : Theme.accentStart)
-            .disabled(subscriptionManager.isProcessing)
-            .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    @ViewBuilder
-    private var errorMessageView: some View {
-        if let error = subscriptionManager.errorMessage {
-            Text(error)
-                .font(.footnote)
-                .foregroundStyle(.red)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
+    // MARK: - Secciones
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Suscríbete por \(subscriptionManager.priceDisplay)")
-                .font(.title2.bold())
-                .foregroundStyle(textPrimary)
-            Text("Desbloquea análisis ilimitados, IA prioritaria y métricas avanzadas.")
-                .foregroundStyle(textSecondary)
+        VStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 72, height: 72)
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            Text("Go Viral Pro")
+                .font(.largeTitle.bold())
+                .foregroundStyle(Theme.primary(scheme))
+            Text("Analiza tus vídeos y crea guiones sin límite mensual.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.secondary(scheme))
+                .multilineTextAlignment(.center)
         }
+        .padding(.top, 8)
+    }
+
+    private var benefits: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            BenefitRow(icon: "film.stack", title: "Análisis de vídeo ilimitados",
+                       detail: "Gratis: \(AnalysisCreditsManager.freeMonthlyLimit) al mes")
+            BenefitRow(icon: "doc.text.fill", title: "Guiones con IA ilimitados",
+                       detail: "Gratis: \(ScriptQuota.freeMonthlyGenerations) generaciones al mes")
+            BenefitRow(icon: "xmark.circle", title: "Cancela cuando quieras",
+                       detail: "Desde Ajustes de tu iPhone, sin permanencia")
+        }
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal)
+        .background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
-    private var benefits: [String] {
-        [
-            "Análisis ilimitados con IA (vs 3 mensuales gratis)",
-            "Prioridad en procesamiento",
-            "Predicciones detalladas y consejos pro",
-            "Historial completo y sincronizado"
-        ]
+    @ViewBuilder
+    private var plans: some View {
+        if subscriptionManager.products.isEmpty {
+            VStack(spacing: 12) {
+                if subscriptionManager.isLoadingProducts {
+                    ProgressView()
+                } else {
+                    Text(subscriptionManager.errorMessage ?? "Planes no disponibles.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary(scheme))
+                        .multilineTextAlignment(.center)
+                    Button("Reintentar") { Task { await subscriptionManager.refreshProducts() } }
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 140)
+        } else {
+            VStack(spacing: 12) {
+                ForEach(subscriptionManager.products, id: \.id) { product in
+                    PlanCard(product: product,
+                             isSelected: product.id == selected?.id,
+                             savingsPercent: product.id == subscriptionManager.yearly?.id ? subscriptionManager.yearlySavingsPercent : nil) {
+                        selectedID = product.id
+                    }
+                }
+            }
+        }
     }
 
-    private func purchase() {
-        Task { await subscriptionManager.purchase() }
+    private var purchaseButton: some View {
+        VStack(spacing: 10) {
+            Button {
+                guard let selected else { return }
+                Task { await subscriptionManager.purchase(selected) }
+            } label: {
+                Group {
+                    if subscriptionManager.isProcessing {
+                        ProgressView().tint(.white)
+                    } else {
+                        Text("Continuar")
+                            .font(.headline)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .foregroundStyle(.white)
+            }
+            .disabled(selected == nil || subscriptionManager.isProcessing)
+            .opacity(selected == nil ? 0.5 : 1)
+
+            if let error = subscriptionManager.errorMessage, !subscriptionManager.products.isEmpty {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
+        }
     }
 
-    private func restorePurchases() {
-        Task { await subscriptionManager.restorePurchases() }
+    /// Texto de renovación automática que exige la App Store (guía 3.1.2).
+    @ViewBuilder
+    private var disclosure: some View {
+        if let selected {
+            Text("\(selected.displayPrice) \(selected.periodText). La suscripción se renueva automáticamente salvo que la canceles al menos 24 horas antes de que termine el periodo. El cobro se hace en tu cuenta de Apple al confirmar la compra. Puedes gestionarla o cancelarla en Ajustes > tu nombre > Suscripciones.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondary(scheme))
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private var footerLinks: some View {
+        HStack(spacing: 16) {
+            Button("Restaurar compras") { Task { await subscriptionManager.restorePurchases() } }
+                .disabled(subscriptionManager.isProcessing)
+            Link("Términos", destination: LegalLinks.terms)
+            Link("Privacidad", destination: LegalLinks.privacy)
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(Theme.accentStart)
+        .padding(.bottom, 8)
+    }
+}
+
+// MARK: - Componentes
+
+private struct BenefitRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Theme.accentStart)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.primary(scheme))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(Theme.secondary(scheme))
+            }
+        }
+    }
+}
+
+private struct PlanCard: View {
+    let product: Product
+    let isSelected: Bool
+    let savingsPercent: Int?
+    let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    private var isYearly: Bool { product.subscription?.subscriptionPeriod.unit == .year }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Theme.accentStart : Theme.secondary(scheme))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(isYearly ? "Anual" : "Mensual")
+                            .font(.headline)
+                            .foregroundStyle(Theme.primary(scheme))
+                        if let savingsPercent {
+                            Text("Ahorra \(savingsPercent)%")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Theme.accent, in: Capsule())
+                        }
+                    }
+                    if isYearly {
+                        Text("Equivale a \(product.monthlyEquivalent) al mes")
+                            .font(.caption)
+                            .foregroundStyle(Theme.secondary(scheme))
+                    }
+                }
+
+                Spacer()
+
+                Text(product.displayPrice)
+                    .font(.headline)
+                    .foregroundStyle(Theme.primary(scheme))
+            }
+            .padding(16)
+            .background(Theme.panel(scheme), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isSelected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.subtleStroke(scheme)),
+                            lineWidth: isSelected ? 2 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: isSelected)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension Product {
+    /// "al año" / "al mes" para el texto de renovación.
+    var periodText: String {
+        switch subscription?.subscriptionPeriod.unit {
+        case .year: return "al año"
+        case .month: return "al mes"
+        case .week: return "a la semana"
+        case .day: return "al día"
+        default: return ""
+        }
+    }
+
+    /// Precio anual dividido entre 12, con el formato de moneda de la tienda.
+    var monthlyEquivalent: String {
+        (price / 12).formatted(priceFormatStyle)
+    }
+}
+
+/// Arriba a la derecha: "PRO" si hay suscripción activa; si no, "Probar Pro" para abrir el paywall.
+struct ProStatusButton: View {
+    @EnvironmentObject private var subscriptionManager: SubscriptionManager
+    let onUpgrade: () -> Void
+    @State private var showManage = false
+
+    var body: some View {
+        Group {
+            if subscriptionManager.isSubscribed {
+                Button { showManage = true } label: {
+                    Label("PRO", systemImage: "crown.fill")
+                        .font(.caption.weight(.heavy))
+                        .labelStyle(.titleAndIcon)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Theme.accent, in: Capsule())
+                        .foregroundStyle(.white)
+                }
+                .accessibilityLabel("Suscripción Pro activa. Ver tu plan")
+                .sheet(isPresented: $showManage) { ProAccountView() }
+            } else {
+                Button(action: onUpgrade) {
+                    Text("Probar Pro")
+                        .font(.caption.weight(.bold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .overlay(Capsule().stroke(Theme.accent, lineWidth: 1.5))
+                        .foregroundStyle(Theme.accentStart)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }

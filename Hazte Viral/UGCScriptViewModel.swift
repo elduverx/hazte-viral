@@ -9,295 +9,213 @@ import Foundation
 import SwiftUI
 import Combine
 
+/// Lo que el usuario rellena en el formulario. Se guarda como borrador para no perderlo.
+struct ScriptBrief: Codable, Equatable {
+    var nicheID = BusinessNiche.allCases[0].id
+    /// Lo que escribe el usuario al elegir "Otro".
+    var customNiche = ""
+    var businessType = ""
+    var productService = ""
+    var targetAudience = ""
+    var benefits: [String] = [""]
+    var duration: ScriptDuration = .medium
+    var hookType: HookType = .question
+    var tone: ScriptTone = .authentic
+    var count = 2
+
+    init() {}
+
+    // Decodificación tolerante: los borradores guardados antes de añadir un campo siguen sirviendo.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = ScriptBrief()
+        nicheID = (try? c.decode(String.self, forKey: .nicheID)) ?? defaults.nicheID
+        customNiche = (try? c.decode(String.self, forKey: .customNiche)) ?? ""
+        businessType = (try? c.decode(String.self, forKey: .businessType)) ?? ""
+        productService = (try? c.decode(String.self, forKey: .productService)) ?? ""
+        targetAudience = (try? c.decode(String.self, forKey: .targetAudience)) ?? ""
+        benefits = (try? c.decode([String].self, forKey: .benefits)) ?? defaults.benefits
+        duration = (try? c.decode(ScriptDuration.self, forKey: .duration)) ?? defaults.duration
+        hookType = (try? c.decode(HookType.self, forKey: .hookType)) ?? defaults.hookType
+        tone = (try? c.decode(ScriptTone.self, forKey: .tone)) ?? defaults.tone
+        count = (try? c.decode(Int.self, forKey: .count)) ?? defaults.count
+    }
+
+    static let maxBenefits = 5
+    static let countRange = 1...3
+
+    var filledBenefits: [String] {
+        benefits.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    var isCustomNiche: Bool { nicheID == BusinessNiche.otherID }
+
+    /// Nombre legible del nicho que se envía a la IA.
+    var nicheName: String {
+        isCustomNiche ? customNiche.trimmed : (BusinessNiche.named(nicheID)?.name ?? nicheID)
+    }
+
+    /// Qué falta del paso 1, o nil si está completo.
+    var missingBusinessField: String? {
+        if isCustomNiche && customNiche.trimmed.isEmpty { return "tu nicho" }
+        if businessType.trimmed.isEmpty { return "el tipo de negocio" }
+        if productService.trimmed.isEmpty { return "el producto o servicio" }
+        if targetAudience.trimmed.isEmpty { return "el público objetivo" }
+        if filledBenefits.isEmpty { return "al menos un beneficio" }
+        return nil
+    }
+
+    var request: ScriptGenerationRequest {
+        ScriptGenerationRequest(
+            businessType: businessType.trimmed,
+            productService: productService.trimmed,
+            targetAudience: targetAudience.trimmed,
+            duration: duration,
+            hookType: hookType,
+            tone: tone,
+            keyBenefits: filledBenefits,
+            niche: nicheName
+        )
+    }
+}
+
+private extension String {
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
 @MainActor
 final class UGCScriptViewModel: ObservableObject {
-    
-    // MARK: - Published Properties
-    @Published var generatedScripts: [UGCScript] = []
-    @Published var isGenerating = false
-    @Published var showError = false
+    enum Step: Int, CaseIterable {
+        case business, style, results
+
+        var title: String {
+            switch self {
+            case .business: return "Negocio"
+            case .style: return "Estilo"
+            case .results: return "Guiones"
+            }
+        }
+    }
+
+    @Published var brief: ScriptBrief { didSet { saveDraft() } }
+    @Published var step: Step = .business
+    @Published private(set) var results: [UGCScript] = []
+    @Published private(set) var isGenerating = false
+    @Published private(set) var generationStage: ScriptGenerationStage = .sending
     @Published var errorMessage: String?
-    @Published var showScriptDetail = false
-    @Published var selectedScript: UGCScript?
-    @Published var paywallTrigger = 0
-    
-    // Form inputs
-    @Published var selectedNiche: BusinessNiche = BusinessNiche.allCases[0]
-    @Published var businessType = ""
-    @Published var productService = ""
-    @Published var targetAudience = ""
-    @Published var selectedDuration: ScriptDuration = .medium
-    @Published var selectedHookType: HookType = .question
-    @Published var selectedTone: ScriptTone = .professional
-    @Published var keyBenefits: [String] = ["", "", ""]
-    @Published var scriptCount = 3
-    
-    // MARK: - Services
+    @Published var showPaywall = false
+
+    let library: ScriptLibrary
+    let quota: ScriptQuota
     private let scriptService: UGCScriptGenerating
-    let creditsManager: CreditsManager
-    
-    init(scriptService: UGCScriptGenerating? = nil, creditsManager: CreditsManager? = nil) {
+    private let subscription: SubscriptionManager
+    private var generationTask: Task<[UGCScript], Error>?
+
+    private static let draftKey = "ugc_brief_draft"
+
+    init(scriptService: UGCScriptGenerating? = nil,
+         library: ScriptLibrary? = nil,
+         quota: ScriptQuota? = nil,
+         subscription: SubscriptionManager? = nil) {
         self.scriptService = scriptService ?? ClaudeUGCScriptService()
-        self.creditsManager = creditsManager ?? CreditsManager.shared
+        self.library = library ?? .shared
+        self.quota = quota ?? .shared
+        self.subscription = subscription ?? .shared
+        if let data = UserDefaults.standard.data(forKey: Self.draftKey),
+           let draft = try? JSONDecoder().decode(ScriptBrief.self, from: data) {
+            brief = draft
+        } else {
+            brief = ScriptBrief()
+        }
     }
-    
-    // MARK: - Actions
-    func generateScripts() async {
-        guard validateInputs() else { return }
-        
-        // Check credits/subscription
-        guard creditsManager.canGenerateScripts(count: scriptCount) else {
-            paywallTrigger += 1
+
+    var isSubscribed: Bool { subscription.isSubscribed }
+
+    // MARK: - Navegación
+
+    func continueToStyle() {
+        if let missing = brief.missingBusinessField {
+            errorMessage = "Falta \(missing)."
             return
         }
-        
-        isGenerating = true
-        errorMessage = nil
-        
-        do {
-            let request = ScriptGenerationRequest(
-                businessType: businessType,
-                productService: productService,
-                targetAudience: targetAudience,
-                duration: selectedDuration,
-                hookType: selectedHookType,
-                tone: selectedTone,
-                keyBenefits: keyBenefits.filter { !$0.isEmpty },
-                niche: selectedNiche.id
-            )
-            
-            let scripts = try await scriptService.generateMultipleScripts(request: request, count: scriptCount)
-            
-            creditsManager.consumeCredits(scriptCount)
-            generatedScripts = scripts
-            
-        } catch {
-            errorMessage = error.localizedDescription
-            showError = true
-        }
-        
-        isGenerating = false
+        step = .style
     }
-    
-    func selectScript(_ script: UGCScript) {
-        selectedScript = script
-        showScriptDetail = true
+
+    func back() {
+        guard let previous = Step(rawValue: step.rawValue - 1) else { return }
+        step = previous
     }
-    
+
+    func startOver() {
+        results = []
+        step = .business
+    }
+
+    // MARK: - Beneficios
+
     func addBenefit() {
-        if keyBenefits.count < 5 {
-            keyBenefits.append("")
-        }
+        guard brief.benefits.count < ScriptBrief.maxBenefits else { return }
+        brief.benefits.append("")
     }
-    
-    func removeBenefit(at index: Int) {
-        if keyBenefits.count > 1 {
-            keyBenefits.remove(at: index)
-        }
-    }
-    
-    func clearForm() {
-        businessType = ""
-        productService = ""
-        targetAudience = ""
-        keyBenefits = ["", "", ""]
-        generatedScripts = []
-        selectedScript = nil
-    }
-    
-    // MARK: - Private Methods
-    private func validateInputs() -> Bool {
-        if businessType.isEmpty {
-            errorMessage = "Especifica el tipo de negocio"
-            showError = true
-            return false
-        }
-        
-        if productService.isEmpty {
-            errorMessage = "Describe tu producto o servicio"
-            showError = true
-            return false
-        }
-        
-        if targetAudience.isEmpty {
-            errorMessage = "Define tu público objetivo"
-            showError = true
-            return false
-        }
-        
-        if keyBenefits.allSatisfy({ $0.isEmpty }) {
-            errorMessage = "Añade al menos un beneficio clave"
-            showError = true
-            return false
-        }
-        
-        return true
-    }
-}
 
-// MARK: - Credits Manager
-@MainActor
-final class CreditsManager: ObservableObject {
-    static let shared = CreditsManager()
-    
-    @Published var availableCredits: Int = 0
-    @Published var monthlyUsage: Int = 0
-    @Published var lastResetDate: Date = Date()
-    
-    private let freeMonthlyLimit = 3
-    private let userDefaults = UserDefaults.standard
-    
-    init() {
-        loadCreditsData()
-        checkMonthlyReset()
+    func removeBenefit(at index: Int) {
+        guard brief.benefits.indices.contains(index), brief.benefits.count > 1 else { return }
+        brief.benefits.remove(at: index)
     }
-    
-    func canGenerateScripts(count: Int) -> Bool {
-        if SubscriptionManager.shared.isSubscribed {
-            return true
-        }
-        return monthlyUsage + count <= freeMonthlyLimit
-    }
-    
-    func consumeCredits(_ count: Int) {
-        if SubscriptionManager.shared.isSubscribed {
+
+    // MARK: - Generación
+
+    func generate() async {
+        if let missing = brief.missingBusinessField {
+            errorMessage = "Falta \(missing)."
+            step = .business
             return
         }
-        monthlyUsage += count
-        saveCreditsData()
-    }
-    
-    func purchaseCredits(_ count: Int) {
-        availableCredits += count
-        saveCreditsData()
-    }
-    
-    private func checkMonthlyReset() {
-        let calendar = Calendar.current
-        if !calendar.isDate(lastResetDate, equalTo: Date(), toGranularity: .month) {
-            monthlyUsage = 0
-            lastResetDate = Date()
-            saveCreditsData()
+        guard quota.canGenerate(isSubscribed: isSubscribed) else {
+            showPaywall = true
+            return
         }
-    }
-    
-    private func loadCreditsData() {
-        availableCredits = userDefaults.integer(forKey: "ugc_credits")
-        monthlyUsage = userDefaults.integer(forKey: "ugc_monthly_usage")
-        if let resetDate = userDefaults.object(forKey: "ugc_last_reset") as? Date {
-            lastResetDate = resetDate
-        }
-    }
-    
-    private func saveCreditsData() {
-        userDefaults.set(availableCredits, forKey: "ugc_credits")
-        userDefaults.set(monthlyUsage, forKey: "ugc_monthly_usage")
-        userDefaults.set(lastResetDate, forKey: "ugc_last_reset")
-    }
-}
 
-// MARK: - Script Templates
-extension UGCScriptViewModel {
-    static let predefinedTemplates: [String: [ScriptTemplate]] = [
-        "restaurant": [
-            ScriptTemplate(
-                title: "Plato Signature",
-                structure: "Hook: Ingrediente secreto → Proceso → Resultado → CTA",
-                niche: "restaurant",
-                duration: .medium,
-                hookType: .question,
-                cta: "Reserva tu mesa"
-            ),
-            ScriptTemplate(
-                title: "Experiencia Gastronómica",
-                structure: "Hook: Momento wow → Ambiente → Sabores → CTA",
-                niche: "restaurant",
-                duration: .long,
-                hookType: .result,
-                cta: "Vive la experiencia"
-            )
-        ],
-        "beauty": [
-            ScriptTemplate(
-                title: "Transformación",
-                structure: "Hook: Antes → Proceso → Después → CTA",
-                niche: "beauty",
-                duration: .medium,
-                hookType: .result,
-                cta: "Reserva tu cita"
-            ),
-            ScriptTemplate(
-                title: "Tratamiento Exclusivo",
-                structure: "Hook: Problema común → Solución única → Beneficios → CTA",
-                niche: "beauty",
-                duration: .short,
-                hookType: .problem,
-                cta: "Descubre el tratamiento"
-            )
-        ],
-        "vtc": [
-            ScriptTemplate(
-                title: "Viaje Premium",
-                structure: "Hook: Experiencia VIP → Comodidades → Diferencias → CTA",
-                niche: "vtc",
-                duration: .medium,
-                hookType: .question,
-                cta: "Reserva tu viaje"
-            )
-        ],
-        "realestate": [
-            ScriptTemplate(
-                title: "Tour Virtual",
-                structure: "Hook: Propiedad única → Tour → Características → CTA",
-                niche: "realestate",
-                duration: .long,
-                hookType: .result,
-                cta: "Programa tu visita"
-            )
-        ],
-        "fitness": [
-            ScriptTemplate(
-                title: "Transformación Fitness",
-                structure: "Hook: Resultado → Proceso → Método → CTA",
-                niche: "fitness",
-                duration: .medium,
-                hookType: .result,
-                cta: "Inicia tu transformación"
-            )
-        ],
-        "fashion": [
-            ScriptTemplate(
-                title: "Look del Día",
-                structure: "Hook: Tendencia → Combinaciones → Styling → CTA",
-                niche: "fashion",
-                duration: .short,
-                hookType: .question,
-                cta: "Descubre tu estilo"
-            )
-        ],
-        "tech": [
-            ScriptTemplate(
-                title: "Problema-Solución",
-                structure: "Hook: Pain Point → Demo → Beneficios → CTA",
-                niche: "tech",
-                duration: .medium,
-                hookType: .problem,
-                cta: "Prueba gratis"
-            )
-        ],
-        "education": [
-            ScriptTemplate(
-                title: "Tip Educativo",
-                structure: "Hook: Stat sorprendente → Explicación → Aplicación → CTA",
-                niche: "education",
-                duration: .short,
-                hookType: .question,
-                cta: "Aprende más"
-            )
-        ]
-    ]
-    
-    func getTemplatesForNiche(_ niche: String) -> [ScriptTemplate] {
-        return Self.predefinedTemplates[niche] ?? []
+        generationStage = .sending
+        isGenerating = true
+        defer {
+            isGenerating = false
+            generationTask = nil
+        }
+
+        let service = scriptService
+        let request = brief.request
+        let count = brief.count
+        let task = Task {
+            try await service.generateScripts(request: request, count: count) { [weak self] stage in
+                self?.generationStage = stage
+            }
+        }
+        generationTask = task
+
+        do {
+            let scripts = try await task.value
+            quota.recordGeneration(isSubscribed: isSubscribed)
+            library.add(scripts)
+            results = scripts
+            step = .results
+        } catch is CancellationError {
+            // Cancelado por el usuario: no consume cuota.
+        } catch let error as URLError where error.code == .cancelled {
+            // Ídem.
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func cancelGeneration() {
+        generationTask?.cancel()
+    }
+
+    // MARK: - Borrador
+
+    private func saveDraft() {
+        guard let data = try? JSONEncoder().encode(brief) else { return }
+        UserDefaults.standard.set(data, forKey: Self.draftKey)
     }
 }
